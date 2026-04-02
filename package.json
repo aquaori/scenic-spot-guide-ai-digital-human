@@ -1,0 +1,23 @@
+{
+  "name": "zhongruanbei-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@10.9.3",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "overrides": {
+    "axios": "1.14.0"
+  },
+  "scripts": {
+    "dev:tourist": "npm run dev --workspace @zrb/tourist-web",
+    "dev:admin": "npm run dev --workspace @zrb/admin",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

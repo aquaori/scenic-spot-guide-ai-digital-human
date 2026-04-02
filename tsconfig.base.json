@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "strict": true,
+    "jsx": "preserve",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@zrb/shared-api": ["packages/shared-api/src/index.ts"],
+      "@zrb/shared-types": ["packages/shared-types/src/index.ts"],
+      "@zrb/shared-utils": ["packages/shared-utils/src/index.ts"],
+      "@zrb/ui": ["packages/ui/src/index.ts"]
+    }
+  }
+}
