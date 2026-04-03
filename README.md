@@ -21,6 +21,8 @@
 - `apps/tourist-web`: 游客交互端
 - `apps/admin`: 管理后台
 - `packages/shared-api`: 接口层与 Axios 实例
+- `packages/live2d-assets`: Live2D 模型资源
+- `packages/live2d-runtime`: Live2D 渲染运行时环境
 - `packages/shared-types`: 共享业务类型
 - `packages/shared-utils`: 通用工具
 - `packages/ui`: 公共 UI 基础能力
@@ -40,7 +42,17 @@ npm run dev:tourist
 npm run dev:admin
 ```
 
+## 更新日志
+
+- 2026.4.3
+    1. 接入了Live2D模型，实现了基本的动作切换、眼球跟随、实时口型等
+
 ## TODO List
 
-- [ ] 数字人接入
+- [x] 数字人接入
+- [ ] Live2D模型重绘
 - [ ] 后端接口联调
+
+## 声明
+
+1. 项目所用Live2D模型来自模之屋资源，只做学习和测试用途临时使用，不作为最终参赛作品形态或商业用途，如有侵犯，可联系删除。

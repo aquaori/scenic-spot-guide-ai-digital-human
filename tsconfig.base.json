@@ -13,6 +13,7 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
+      "@zrb/live2d-runtime": ["packages/live2d-runtime/src/index.ts"],
       "@zrb/shared-api": ["packages/shared-api/src/index.ts"],
       "@zrb/shared-types": ["packages/shared-types/src/index.ts"],
       "@zrb/shared-utils": ["packages/shared-utils/src/index.ts"],

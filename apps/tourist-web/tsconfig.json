@@ -4,5 +4,11 @@
     "composite": true,
     "types": ["vite/client"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.vue",
+    "../../packages/live2d-runtime/src/**/*.ts",
+    "../../packages/live2d-runtime/src/**/*.d.ts"
+  ]
 }

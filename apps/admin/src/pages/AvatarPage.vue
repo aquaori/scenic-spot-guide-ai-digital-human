@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AdminLive2DStage from "@/components/avatar/AdminLive2DStage.vue";
 import UiBadge from "@/components/ui/UiBadge.vue";
 import UiButton from "@/components/ui/UiButton.vue";
 import UiCard from "@/components/ui/UiCard.vue";
@@ -6,7 +7,7 @@ import { avatarProfiles } from "@/mocks/dashboard";
 </script>
 
 <template>
-  <div class="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+  <div class="grid gap-5 xl:grid-cols-[1.28fr_0.72fr]">
     <UiCard class="rounded-[28px] px-5 py-5">
       <div class="flex items-center justify-between">
         <div>
@@ -26,7 +27,11 @@ import { avatarProfiles } from "@/mocks/dashboard";
             <div>
               <h3 class="text-base font-semibold text-slate-900">{{ profile.name }}</h3>
               <div class="mt-3 flex flex-wrap gap-2">
-                <UiBadge v-for="tag in profile.tags" :key="tag" variant="secondary">
+                <UiBadge
+                  v-for="tag in profile.tags"
+                  :key="tag"
+                  variant="secondary"
+                >
                   {{ tag }}
                 </UiBadge>
               </div>
@@ -37,13 +42,14 @@ import { avatarProfiles } from "@/mocks/dashboard";
       </div>
     </UiCard>
 
-    <UiCard class="rounded-[28px] px-5 py-5">
+    <UiCard class="rounded-[28px] px-5 py-5 xl:px-6 xl:py-6">
       <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Preview Stage</p>
       <h3 class="mt-2 text-lg font-semibold text-slate-900">预览舞台</h3>
-      <div class="mt-6 flex h-[520px] items-center justify-center rounded-[32px] border border-dashed border-slate-300 bg-[linear-gradient(180deg,#ffffff_0%,#eef6ff_100%)]">
-        <div class="text-center">
-          <p class="text-sm font-medium text-slate-500">数字人预览区域</p>
-          <p class="mt-2 text-sm text-slate-400">后续可接 Live2D / VTuber 运行时</p>
+      <div class="mt-5 flex min-h-[620px] items-center justify-center">
+        <div class="w-full max-w-[400px]">
+          <div class="aspect-[9/16] overflow-hidden rounded-[32px] border border-[color:var(--color-border)] bg-slate-50 shadow-[0_24px_60px_rgba(135,135,135,0.07)]">
+            <AdminLive2DStage />
+          </div>
         </div>
       </div>
     </UiCard>

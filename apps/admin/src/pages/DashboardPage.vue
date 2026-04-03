@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import * as echarts from "echarts";
+import { BarChart, LineChart, ScatterChart } from "echarts/charts";
+import { GridComponent, TooltipComponent } from "echarts/components";
+import { init, use, graphic, type ECharts } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import UiBadge from "@/components/ui/UiBadge.vue";
 import UiCard from "@/components/ui/UiCard.vue";
@@ -12,11 +15,13 @@ import {
   serviceTimeline
 } from "@/mocks/dashboard";
 
+use([BarChart, LineChart, ScatterChart, GridComponent, TooltipComponent, CanvasRenderer]);
+
 const trafficChartRef = ref<HTMLDivElement | null>(null);
 const satisfactionChartRef = ref<HTMLDivElement | null>(null);
 
-let trafficChart: echarts.ECharts | null = null;
-let satisfactionChart: echarts.ECharts | null = null;
+let trafficChart: ECharts | null = null;
+let satisfactionChart: ECharts | null = null;
 let trafficChartObserver: ResizeObserver | null = null;
 let satisfactionChartObserver: ResizeObserver | null = null;
 
@@ -52,7 +57,7 @@ const satisfactionSeries = computed(() => {
     symbol: "none",
     lineStyle: { width: 0, color: "transparent" },
     areaStyle: {
-      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+      color: new graphic.LinearGradient(0, 0, 0, 1, [
         { offset: 0, color: "rgba(59, 130, 246, 0.14)" },
         { offset: 1, color: "rgba(59, 130, 246, 0.02)" }
       ])
@@ -105,7 +110,7 @@ const renderTrafficChart = () => {
   if (!trafficChartRef.value) return;
 
   if (!trafficChart) {
-    trafficChart = echarts.init(trafficChartRef.value);
+    trafficChart = init(trafficChartRef.value);
   }
 
   trafficChart.setOption({
@@ -170,7 +175,7 @@ const renderTrafficChart = () => {
         barCategoryGap: "32%",
         itemStyle: {
           borderRadius: [10, 10, 4, 4],
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          color: new graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: "#93c5fd" },
             { offset: 0.45, color: "#60a5fa" },
             { offset: 1, color: "#2563eb" }
@@ -186,7 +191,7 @@ const renderTrafficChart = () => {
         },
         emphasis: {
           itemStyle: {
-            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            color: new graphic.LinearGradient(0, 0, 0, 1, [
               { offset: 0, color: "#60a5fa" },
               { offset: 0.55, color: "#3b82f6" },
               { offset: 1, color: "#1d4ed8" }
@@ -203,7 +208,7 @@ const renderSatisfactionChart = () => {
   if (!satisfactionChartRef.value) return;
 
   if (!satisfactionChart) {
-    satisfactionChart = echarts.init(satisfactionChartRef.value);
+    satisfactionChart = init(satisfactionChartRef.value);
   }
 
   satisfactionChart.setOption({

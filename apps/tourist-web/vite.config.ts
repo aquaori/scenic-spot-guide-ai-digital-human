@@ -5,6 +5,7 @@ import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
+  publicDir: fileURLToPath(new URL("../../packages/live2d-assets/public", import.meta.url)),
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
