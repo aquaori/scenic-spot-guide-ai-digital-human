@@ -2,23 +2,23 @@
 
 @theme {
   --font-sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --color-background: #f6f7fb;
+  --color-background: #f4f7fb;
   --color-foreground: #0f172a;
   --color-card: #ffffff;
   --color-card-foreground: #0f172a;
   --color-popover: #ffffff;
   --color-popover-foreground: #0f172a;
-  --color-primary: #0f172a;
-  --color-primary-foreground: #f8fafc;
-  --color-secondary: #eef2ff;
-  --color-secondary-foreground: #334155;
-  --color-muted: #f1f5f9;
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #eef4ff;
+  --color-secondary-foreground: #31527f;
+  --color-muted: #f7f9fc;
   --color-muted-foreground: #64748b;
-  --color-accent: #eff6ff;
-  --color-accent-foreground: #1e293b;
-  --color-border: #e2e8f0;
-  --color-input: #e2e8f0;
-  --color-ring: rgba(15, 23, 42, 0.14);
+  --color-accent: #e8f0ff;
+  --color-accent-foreground: #1d4ed8;
+  --color-border: #d7e3f4;
+  --color-input: #d7e3f4;
+  --color-ring: rgba(37, 99, 235, 0.2);
   --radius: 1rem;
 }
 
@@ -39,10 +39,20 @@
 
 @layer components {
   .admin-surface {
-    border: 1px solid rgba(15, 23, 42, 0.06);
+    border: 1px solid rgba(148, 163, 184, 0.16);
     box-shadow:
-      0 1px 2px rgba(15, 23, 42, 0.04),
-      0 14px 34px rgba(15, 23, 42, 0.04);
+      0 1px 2px rgba(148, 163, 184, 0.04),
+      0 8px 24px rgba(148, 163, 184, 0.08);
+  }
+
+  .admin-fade-enter-active,
+  .admin-fade-leave-active {
+    transition: opacity 0.2s ease;
+  }
+
+  .admin-fade-enter-from,
+  .admin-fade-leave-to {
+    opacity: 0;
   }
 
   .panel-grid {

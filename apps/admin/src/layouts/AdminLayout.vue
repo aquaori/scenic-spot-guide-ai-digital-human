@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
+import { storeToRefs } from "pinia";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import {
   Bot,
@@ -13,6 +14,8 @@ import {
 } from "lucide-vue-next";
 import UiButton from "@/components/ui/UiButton.vue";
 import { cn } from "@/lib/utils";
+import { useAdminStore } from "@/stores/admin";
+import { useAuthStore } from "@/stores/auth";
 
 type NavChild = {
   label: string;
@@ -28,28 +31,31 @@ type NavGroup = {
 
 const collapsed = ref(false);
 const route = useRoute();
+const adminStore = useAdminStore();
+const authStore = useAuthStore();
+const { scenicList, selectedScenic, selectedScenicId, isScenicLoading } = storeToRefs(adminStore);
 
 const navigationGroups: NavGroup[] = [
   {
     key: "ops",
-    label: "运营模块",
+    label: "运营总览",
     children: [
-      { label: "运营总览", to: "/", icon: LayoutDashboard },
-      { label: "会话记录", to: "/conversation", icon: MessageSquareText }
+      { label: "数据看板", to: "/", icon: LayoutDashboard },
+      { label: "问答审计", to: "/conversation", icon: MessageSquareText }
     ]
   },
   {
     key: "content",
-    label: "内容模块",
+    label: "内容资产",
     children: [
-      { label: "数字人形象", to: "/avatar", icon: Bot },
-      { label: "知识库管理", to: "/knowledge", icon: Database }
+      { label: "数字人配置", to: "/avatar", icon: Bot },
+      { label: "知识库文档", to: "/knowledge", icon: Database }
     ]
   },
   {
     key: "system",
-    label: "系统模块",
-    children: [{ label: "系统设置", to: "/settings", icon: Settings }]
+    label: "系统配置",
+    children: [{ label: "接入状态", to: "/settings", icon: Settings }]
   }
 ];
 
@@ -60,37 +66,43 @@ const groupState = reactive<Record<string, boolean>>({
 });
 
 const pageTitleMap: Record<string, string> = {
-  dashboard: "运营总览",
-  avatar: "数字人形象",
-  knowledge: "知识库管理",
-  conversation: "会话记录",
-  settings: "系统设置"
+  dashboard: "数据看板",
+  avatar: "数字人配置",
+  knowledge: "知识库文档",
+  conversation: "问答审计",
+  settings: "接入状态"
 };
 
-const currentTitle = computed(() => pageTitleMap[String(route.name ?? "dashboard")] ?? "运营总览");
+const currentTitle = computed(() => pageTitleMap[String(route.name ?? "dashboard")] ?? "数据看板");
+
+onMounted(async () => {
+  await adminStore.ensureScenicList();
+});
 
 function toggleGroup(key: string) {
-  if (collapsed.value) {
-    return;
-  }
-
+  if (collapsed.value) return;
   groupState[key] = !groupState[key];
 }
+
+const handleLogout = async () => {
+  await authStore.logout();
+  window.location.href = "/login";
+};
 </script>
 
 <template>
   <div class="flex min-h-screen bg-[color:var(--color-background)]">
     <aside
       :class="cn(
-        'relative hidden shrink-0 border-r border-slate-200/80 bg-[linear-gradient(180deg,#fbfcff_0%,#f4f7fb_100%)] transition-[width] duration-300 ease-out xl:flex xl:flex-col',
+        'relative hidden shrink-0 border-r border-[#d9e4f5] bg-[linear-gradient(180deg,#f8fbff_0%,#f1f6fd_100%)] transition-[width] duration-300 ease-out xl:flex xl:flex-col',
         collapsed ? 'w-[96px]' : 'w-[308px]'
       )"
     >
-      <div :class="cn('flex h-screen flex-col py-4 transition-[padding] duration-300 ease-out', collapsed ? 'px-2.5' : 'px-3')">
+      <div :class="cn('flex h-screen flex-col py-3 transition-[padding] duration-300 ease-out', collapsed ? 'px-2' : 'px-2.5')">
         <div
           :class="cn(
-            'flex-1 border border-white/70 bg-white/78 shadow-[0_16px_32px_rgba(15,23,42,0.04)] backdrop-blur transition-all duration-300 ease-out',
-            collapsed ? 'rounded-[26px] px-2 py-3' : 'rounded-[30px] px-3 py-4'
+            'flex-1 border border-white/80 bg-white/82 shadow-[0_18px_36px_rgba(148,163,184,0.08)] backdrop-blur transition-all duration-300 ease-out',
+            collapsed ? 'rounded-[8px] px-2 py-2.5' : 'rounded-[8px] px-2.5 py-3'
           )"
         >
           <div class="flex h-9 items-center px-2 pb-2">
@@ -104,28 +116,24 @@ function toggleGroup(key: string) {
             </p>
           </div>
 
-          <nav :class="cn(collapsed ? 'space-y-2' : 'space-y-3')">
+          <nav :class="cn(collapsed ? 'space-y-1.5' : 'space-y-2')">
             <section
               v-for="group in navigationGroups"
               :key="group.key"
               :class="cn(
-                'border border-slate-100 bg-white/80 shadow-[0_8px_20px_rgba(15,23,42,0.03)] transition-all duration-300 ease-out',
-                collapsed ? 'rounded-[22px] px-1.5 py-1.5' : 'rounded-[24px] px-2 py-2'
+                'border border-[#edf2fb] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] shadow-[0_10px_24px_rgba(148,163,184,0.06)] transition-all duration-300 ease-out',
+                collapsed ? 'rounded-[8px] px-1.5 py-1.5' : 'rounded-[8px] px-2 py-2'
               )"
             >
               <button
                 v-if="!collapsed"
                 type="button"
-                class="flex w-full cursor-pointer items-center justify-between rounded-2xl px-3 py-2 text-left"
+                class="flex w-full cursor-pointer items-center justify-between rounded-[8px] px-3 py-2 text-left"
                 @click="toggleGroup(group.key)"
               >
-                <span
-                  v-if="!collapsed"
-                  class="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400"
-                >
+                <span class="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">
                   {{ group.label }}
                 </span>
-                <span v-else class="sr-only">{{ group.label }}</span>
                 <ChevronDown
                   :class="cn('h-4 w-4 text-slate-400 transition-transform duration-300 ease-out', groupState[group.key] && 'rotate-180')"
                 />
@@ -139,70 +147,60 @@ function toggleGroup(key: string) {
                 leave-from-class="max-h-96 opacity-100 translate-y-0"
                 leave-to-class="max-h-0 opacity-0 -translate-y-1"
               >
-                <div
-                  v-if="collapsed || groupState[group.key]"
-                  :class="cn('overflow-hidden space-y-1.5', !collapsed && 'mt-1')"
-                >
-                <RouterLink
-                  v-for="item in group.children"
-                  :key="item.to"
-                  :to="item.to"
-                  custom
-                  v-slot="{ href, navigate, isActive, isExactActive }"
-                >
-                  <a
-                    :href="href"
-                    @click="navigate"
-                    :class="cn(
-                      'group flex w-full cursor-pointer flex-nowrap items-center overflow-hidden font-medium transition-all duration-200',
-                      collapsed
-                        ? 'min-h-12 justify-center rounded-[18px] px-0 py-0'
-                        : 'min-h-11 gap-3 rounded-2xl px-3 py-2.5 text-sm',
-                      (item.to === '/' ? isExactActive : isActive)
-                        ? collapsed
-                          ? 'bg-slate-950 text-white shadow-[0_6px_14px_rgba(15,23,42,0.08)]'
-                          : 'bg-slate-950 text-white shadow-[0_16px_28px_rgba(15,23,42,0.12)]'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                    )"
+                <div v-if="collapsed || groupState[group.key]" :class="cn('overflow-hidden space-y-1.5', !collapsed && 'mt-1')">
+                  <RouterLink
+                    v-for="item in group.children"
+                    :key="item.to"
+                    :to="item.to"
+                    custom
+                    v-slot="{ href, navigate, isActive, isExactActive }"
                   >
-                    <span class="flex h-5 w-5 shrink-0 items-center justify-center">
-                      <component :is="item.icon" class="h-4.5 w-4.5 shrink-0" />
-                    </span>
-                    <span
+                    <a
+                      :href="href"
                       :class="cn(
-                        'block min-w-0 overflow-hidden whitespace-nowrap leading-5 transition-[width,opacity,margin] duration-200 ease-out',
-                        collapsed ? 'ml-0 w-0 opacity-0' : 'ml-0 flex-1 opacity-100'
+                        'group flex w-full cursor-pointer flex-nowrap items-center overflow-hidden font-medium transition-all duration-200',
+                        collapsed ? 'min-h-11 justify-center rounded-[8px]' : 'min-h-10 gap-3 rounded-[8px] px-3 py-2 text-sm',
+                        (item.to === '/' ? isExactActive : isActive)
+                          ? collapsed
+                            ? 'bg-[#2563eb] text-white'
+                            : 'bg-[linear-gradient(180deg,#2563eb_0%,#1d4ed8_100%)] text-white'
+                          : 'text-slate-600 hover:bg-[#edf4ff] hover:text-[#1d4ed8]'
                       )"
+                      @click="navigate"
                     >
+                      <span class="flex h-5 w-5 shrink-0 items-center justify-center">
+                        <component :is="item.icon" class="h-4.5 w-4.5 shrink-0" />
+                      </span>
+                      <span
+                        :class="cn(
+                          'block min-w-0 overflow-hidden whitespace-nowrap leading-5 transition-[width,opacity,margin] duration-200 ease-out',
+                          collapsed ? 'w-0 opacity-0' : 'flex-1 opacity-100'
+                        )"
+                      >
                         {{ item.label }}
-                    </span>
-                  </a>
-                </RouterLink>
+                      </span>
+                    </a>
+                  </RouterLink>
                 </div>
               </Transition>
             </section>
           </nav>
         </div>
 
-        <div class="mt-4 flex items-center gap-3 rounded-[24px] border border-white/70 bg-white/82 p-3 shadow-[0_14px_28px_rgba(15,23,42,0.04)]">
+        <div class="mt-3 flex items-center gap-3 rounded-[8px] border border-white/80 bg-white/84 p-2.5 shadow-[0_12px_24px_rgba(148,163,184,0.08)]">
           <button
             type="button"
-            class="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl bg-slate-100 text-slate-600 transition hover:bg-slate-900 hover:text-white"
+            class="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-[8px] bg-[#eef4ff] text-[#3b5b8a] transition hover:bg-[#2563eb] hover:text-white"
             @click="collapsed = !collapsed"
           >
             <ChevronLeft v-if="!collapsed" class="h-4.5 w-4.5" />
             <ChevronRight v-else class="h-4.5 w-4.5" />
           </button>
 
-          <div
-            :class="cn(
-              'min-w-0 overflow-hidden whitespace-nowrap transition-[width,opacity,margin] duration-200 ease-out',
-              collapsed ? 'w-0 opacity-0' : 'w-[120px] opacity-100'
-            )"
-          >
+          <div :class="cn('min-w-0 overflow-hidden whitespace-nowrap transition-[width,opacity,margin] duration-200 ease-out', collapsed ? 'w-0 opacity-0' : 'w-[150px] opacity-100')">
             <div v-if="!collapsed" class="min-w-0">
-              <p class="text-xs text-slate-500">收起侧边栏</p>
-              <p class="text-sm font-medium text-slate-900">聚焦主工作区</p>
+              <p class="text-xs text-slate-500">当前景区</p>
+              <p class="text-sm font-medium text-slate-900">{{ selectedScenic?.scenicName ?? "加载中" }}</p>
             </div>
           </div>
         </div>
@@ -218,13 +216,26 @@ function toggleGroup(key: string) {
           </div>
 
           <div class="flex items-center gap-3">
-            <UiButton variant="outline">导出日报</UiButton>
-            <UiButton>发布更新</UiButton>
+            <label class="flex items-center gap-3 rounded-[8px] border border-[color:var(--color-border)] bg-white px-4 py-2 text-sm text-slate-600">
+              <span>景区</span>
+              <select
+                :value="selectedScenicId ?? ''"
+                class="min-w-[180px] bg-transparent text-sm text-slate-900 outline-none"
+                :disabled="isScenicLoading"
+                @change="adminStore.setSelectedScenic(Number(($event.target as HTMLSelectElement).value))"
+              >
+                <option v-for="item in scenicList" :key="item.id" :value="item.id">
+                  {{ item.scenicName }}
+                </option>
+              </select>
+            </label>
+            <UiButton variant="outline">{{ selectedScenic?.starLevel ?? "--" }}</UiButton>
+            <UiButton @click="handleLogout">退出登录</UiButton>
           </div>
         </header>
 
         <div class="min-h-0 flex-1 overflow-y-auto">
-          <div class="mx-auto w-full max-w-[1600px] px-5 py-5">
+          <div class="mx-auto w-full max-w-[1540px] px-4 py-4 min-[1800px]:max-w-[1760px] min-[2200px]:max-w-[2080px] min-[2400px]:max-w-[2280px] min-[1800px]:px-3">
             <RouterView />
           </div>
         </div>

@@ -397,7 +397,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="h-screen overflow-hidden bg-[#f7f7f8] text-slate-900">
     <div class="flex h-screen gap-2 p-2 md:gap-3 md:p-3 xl:gap-4">
-      <aside class="hidden h-[calc(100vh-16px)] w-[400px] shrink-0 rounded-[20px] bg-[#f3f4f6] p-2.5 xl:flex xl:flex-col 2xl:h-[calc(100vh-24px)] 2xl:w-[480px] 2xl:rounded-[24px] 2xl:p-3">
+      <aside class="hidden h-[calc(100vh-16px)] w-[500px] shrink-0 rounded-[20px] bg-[#f3f4f6] p-2.5 xl:flex xl:flex-col 2xl:h-[calc(100vh-24px)] 2xl:w-[580px] 2xl:rounded-[24px] 2xl:p-3">
         <div class="soft-float relative h-full overflow-hidden rounded-[26px] bg-[radial-gradient(circle_at_50%_8%,rgba(125,211,252,0.24),transparent_22%),radial-gradient(circle_at_50%_78%,rgba(186,230,253,0.22),transparent_28%),linear-gradient(180deg,#ffffff_0%,#eef6ff_100%)]">
           <div class="absolute inset-x-8 top-8 bottom-8 rounded-[34px] border border-sky-100/80"></div>
           <div class="absolute inset-x-[14%] top-[5%] bottom-[5%] rounded-[40px] bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(239,246,255,0.48))] shadow-[inset_0_0_0_1px_rgba(186,230,253,0.35)]"></div>
@@ -451,7 +451,7 @@ onBeforeUnmount(() => {
                   ? 'rounded-2xl bg-[#f3f4f6] px-5 py-4'
                   : 'rounded-2xl bg-white px-5 py-4'"
               >
-                <div class="whitespace-pre-line text-[15px] leading-8 text-slate-700">
+                <div class="whitespace-pre-line break-words [overflow-wrap:anywhere] text-[15px] leading-8 text-slate-700">
                   {{ message.content }}
                 </div>
               </div>

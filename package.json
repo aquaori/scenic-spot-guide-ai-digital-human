@@ -19,5 +19,10 @@
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "msw": {
+    "workerDirectory": [
+      "packages\\live2d-assets\\public"
+    ]
   }
 }

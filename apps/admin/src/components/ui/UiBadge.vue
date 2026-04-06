@@ -4,12 +4,12 @@ import { computed } from "vue";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+  "inline-flex items-center rounded-[8px] px-2.5 py-1 text-xs font-medium transition-colors",
   {
     variants: {
       variant: {
-        default: "bg-slate-900 text-white",
-        secondary: "bg-slate-100 text-slate-600",
+        default: "bg-[linear-gradient(180deg,#2563eb_0%,#1d4ed8_100%)] text-white",
+        secondary: "bg-[#f3f7fd] text-slate-600",
         success: "bg-emerald-50 text-emerald-700",
         info: "bg-sky-50 text-sky-700"
       }

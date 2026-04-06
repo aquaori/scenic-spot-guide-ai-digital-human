@@ -1,488 +1,416 @@
 <script setup lang="ts">
-import { BarChart, LineChart, ScatterChart } from "echarts/charts";
-import { GridComponent, TooltipComponent } from "echarts/components";
-import { init, use, graphic, type ECharts } from "echarts/core";
-import { CanvasRenderer } from "echarts/renderers";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { storeToRefs } from "pinia";
+import { adminApi } from "@/api/admin";
 import UiBadge from "@/components/ui/UiBadge.vue";
+import UiButton from "@/components/ui/UiButton.vue";
 import UiCard from "@/components/ui/UiCard.vue";
-import {
-  conversationPreview,
-  hotQuestions,
-  satisfactionTrend,
-  serviceBreakdown,
-  serviceOverview,
-  serviceTimeline
-} from "@/mocks/dashboard";
+import UiSkeleton from "@/components/ui/UiSkeleton.vue";
+import { directionTextMap, formatDateLabel, formatNumber, formatPercent, formatRate, sentimentTextMap } from "@/lib/format";
+import { useAdminStore } from "@/stores/admin";
+import type { DailyReport, EmotionTrend, FocusPoints, HotQuestionStats, SatisfactionTrend, TodayOverview, WeeklyStats } from "@/types/admin";
 
-use([BarChart, LineChart, ScatterChart, GridComponent, TooltipComponent, CanvasRenderer]);
+const adminStore = useAdminStore();
+const { selectedScenic, selectedScenicId } = storeToRefs(adminStore);
 
-const trafficChartRef = ref<HTMLDivElement | null>(null);
-const satisfactionChartRef = ref<HTMLDivElement | null>(null);
+const overview = ref<TodayOverview | null>(null);
+const weeklyStats = ref<WeeklyStats | null>(null);
+const hotQuestions = ref<HotQuestionStats | null>(null);
+const emotionTrend = ref<EmotionTrend | null>(null);
+const focusPoints = ref<FocusPoints | null>(null);
+const satisfactionTrend = ref<SatisfactionTrend | null>(null);
+const latestReport = ref<DailyReport | null>(null);
+const loading = ref(false);
+const generating = ref(false);
 
-let trafficChart: ECharts | null = null;
-let satisfactionChart: ECharts | null = null;
-let trafficChartObserver: ResizeObserver | null = null;
-let satisfactionChartObserver: ResizeObserver | null = null;
+const reportDate = "2026-04-06";
+const summarySkeletonCards = Array.from({ length: 4 }, (_, index) => index);
+const listSkeletonItems = Array.from({ length: 6 }, (_, index) => index);
+const compactSkeletonItems = Array.from({ length: 4 }, (_, index) => index);
 
-const timelineMax = Math.max(...serviceTimeline.map((item) => item.value));
-const timelineAverage = Math.round(
-  serviceTimeline.reduce((total, item) => total + item.value, 0) / serviceTimeline.length
+const summaryCards = computed(() => {
+  if (!overview.value || !weeklyStats.value) return [];
+
+  return [
+    {
+      label: "今日访客",
+      value: formatNumber(overview.value.todayVisitors),
+      hint: `峰值时段 ${overview.value.peakHour}`
+    },
+    {
+      label: "今日交互",
+      value: formatNumber(overview.value.todayInteractions),
+      hint: `近 7 天累计 ${formatNumber(weeklyStats.value.summary.totalInteractions)}`
+    },
+    {
+      label: "今日问题",
+      value: formatNumber(overview.value.todayQuestions),
+      hint: `在线数字人 ${overview.value.activeGuides} 个`
+    },
+    {
+      label: "满意度",
+      value: formatPercent(overview.value.satisfactionRate),
+      hint: `周均 ${weeklyStats.value.summary.avgSatisfaction.toFixed(2)} / 5`
+    }
+  ];
+});
+
+const loadDashboard = async (scenicId: number) => {
+  loading.value = true;
+  try {
+    const [overviewRes, weeklyRes, hotRes, emotionRes, focusRes, satisfactionRes, reportRes] = await Promise.all([
+      adminApi.getTodayOverview(scenicId),
+      adminApi.getWeeklyStats(scenicId),
+      adminApi.getHotQuestionStats(scenicId),
+      adminApi.getEmotionTrend(scenicId, "2026-03-31", "2026-04-06"),
+      adminApi.getFocusPoints(scenicId),
+      adminApi.getSatisfactionTrend(scenicId),
+      adminApi.generateDailyReport(scenicId, reportDate)
+    ]);
+
+    overview.value = overviewRes.data;
+    weeklyStats.value = weeklyRes.data;
+    hotQuestions.value = hotRes.data;
+    emotionTrend.value = emotionRes.data;
+    focusPoints.value = focusRes.data;
+    satisfactionTrend.value = satisfactionRes.data;
+    latestReport.value = reportRes.data;
+  } finally {
+    loading.value = false;
+  }
+};
+
+const handleGenerateReport = async () => {
+  if (!selectedScenicId.value) return;
+  generating.value = true;
+  try {
+    latestReport.value = (await adminApi.generateDailyReport(selectedScenicId.value, reportDate)).data;
+  } finally {
+    generating.value = false;
+  }
+};
+
+watch(
+  selectedScenicId,
+  async (scenicId) => {
+    if (!scenicId) return;
+    await loadDashboard(scenicId);
+  },
+  { immediate: true }
 );
-const timelinePeak = serviceTimeline.reduce((peak, item) => (item.value > peak.value ? item : peak));
-
-const satisfactionDateLabels = ["3月27日", "3月28日", "3月29日", "3月30日", "3月31日", "4月1日", "4月2日"];
-const bestSatisfactionIndex = satisfactionTrend.reduce(
-  (bestIndex, item, index, source) => (item.value > source[bestIndex].value ? index : bestIndex),
-  0
-);
-const minSatisfactionValue = Math.min(...satisfactionTrend.map((item) => item.value));
-const maxSatisfactionValue = Math.max(...satisfactionTrend.map((item) => item.value));
-
-const getTrendStroke = (delta: number) => {
-  if (delta > 0.5) return "#16a34a";
-  if (delta >= 0) return "#2563eb";
-  if (delta > -0.5) return "#f59e0b";
-  return "#dc2626";
-};
-
-const satisfactionSeries = computed(() => {
-  const labels = satisfactionDateLabels;
-  const values = satisfactionTrend.map((item) => item.value);
-
-  const areaSeries = {
-    type: "line",
-    data: values,
-    smooth: 0.24,
-    symbol: "none",
-    lineStyle: { width: 0, color: "transparent" },
-    areaStyle: {
-      color: new graphic.LinearGradient(0, 0, 0, 1, [
-        { offset: 0, color: "rgba(59, 130, 246, 0.14)" },
-        { offset: 1, color: "rgba(59, 130, 246, 0.02)" }
-      ])
-    },
-    z: 1
-  };
-
-  const segmentSeries = labels.slice(0, -1).map((label, index) => {
-    const delta = Number((values[index + 1] - values[index]).toFixed(1));
-    const segmentData = labels.map((_, pointIndex) => {
-      if (pointIndex === index) return values[index];
-      if (pointIndex === index + 1) return values[index + 1];
-      return null;
-    });
-
-    return {
-      name: `${label}-${labels[index + 1]}`,
-      type: "line",
-      data: segmentData,
-      connectNulls: false,
-      symbol: "none",
-      lineStyle: {
-        width: 4,
-        color: getTrendStroke(delta),
-        cap: "round",
-        join: "round"
-      },
-      emphasis: { disabled: true },
-      z: 3
-    };
-  });
-
-  const pointSeries = {
-    type: "scatter",
-    data: values,
-    symbolSize: 4.5,
-    itemStyle: {
-      color: "#ffffff",
-      borderColor: "#64748b",
-      borderWidth: 1.1
-    },
-    emphasis: { scale: false },
-    z: 4
-  };
-
-  return [areaSeries, ...segmentSeries, pointSeries];
-});
-
-const renderTrafficChart = () => {
-  if (!trafficChartRef.value) return;
-
-  if (!trafficChart) {
-    trafficChart = init(trafficChartRef.value);
-  }
-
-  trafficChart.setOption({
-    animationDuration: 450,
-    animationEasing: "cubicOut",
-    grid: {
-      top: 16,
-      right: 8,
-      bottom: 28,
-      left: 8,
-      containLabel: true
-    },
-    tooltip: {
-      trigger: "axis",
-      backgroundColor: "rgba(15, 23, 42, 0.92)",
-      borderWidth: 0,
-      textStyle: { color: "#fff" },
-      axisPointer: {
-        type: "shadow",
-        shadowStyle: {
-          color: "rgba(148, 163, 184, 0.08)"
-        }
-      },
-      formatter: (params: Array<{ axisValueLabel: string; data: number }>) => {
-        const value = params[0]?.data ?? 0;
-        return `${params[0]?.axisValueLabel ?? ""}<br/>服务请求 ${value} 次`;
-      }
-    },
-    xAxis: {
-      type: "category",
-      data: serviceTimeline.map((item) => item.label),
-      axisLine: {
-        lineStyle: { color: "#cbd5e1" }
-      },
-      axisTick: { show: false },
-      axisLabel: {
-        color: "#94a3b8",
-        fontSize: 11,
-        margin: 12
-      }
-    },
-    yAxis: {
-      type: "value",
-      min: 0,
-      max: Math.ceil(timelineMax / 10) * 10 + 10,
-      splitNumber: 4,
-      axisLine: { show: false },
-      axisTick: { show: false },
-      axisLabel: { show: false },
-      splitLine: {
-        lineStyle: {
-          color: "#e2e8f0",
-          type: "dashed"
-        }
-      }
-    },
-    series: [
-      {
-        type: "bar",
-        data: serviceTimeline.map((item) => item.value),
-        barWidth: 18,
-        barCategoryGap: "32%",
-        itemStyle: {
-          borderRadius: [10, 10, 4, 4],
-          color: new graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: "#93c5fd" },
-            { offset: 0.45, color: "#60a5fa" },
-            { offset: 1, color: "#2563eb" }
-          ])
-        },
-        label: {
-          show: true,
-          position: "top",
-          color: "#334155",
-          fontSize: 11,
-          fontWeight: 600,
-          distance: 8
-        },
-        emphasis: {
-          itemStyle: {
-            color: new graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: "#60a5fa" },
-              { offset: 0.55, color: "#3b82f6" },
-              { offset: 1, color: "#1d4ed8" }
-            ])
-          }
-        },
-        z: 3
-      }
-    ]
-  });
-};
-
-const renderSatisfactionChart = () => {
-  if (!satisfactionChartRef.value) return;
-
-  if (!satisfactionChart) {
-    satisfactionChart = init(satisfactionChartRef.value);
-  }
-
-  satisfactionChart.setOption({
-    animationDuration: 500,
-    animationEasing: "cubicOut",
-    grid: {
-      top: 18,
-      right: 10,
-      bottom: 20,
-      left: 10,
-      containLabel: true
-    },
-    tooltip: {
-      trigger: "axis",
-      backgroundColor: "rgba(15, 23, 42, 0.92)",
-      borderWidth: 0,
-      textStyle: { color: "#fff" },
-      axisPointer: {
-        type: "line",
-        lineStyle: { color: "rgba(148, 163, 184, 0.45)" }
-      },
-      formatter: (params: Array<{ axisValueLabel: string; data: number | null }>) => {
-        const value = params.find((item) => item.data !== null)?.data ?? null;
-        return `${params[0]?.axisValueLabel ?? ""}<br/>满意度 ${value ?? "--"}%`;
-      }
-    },
-    xAxis: {
-      type: "category",
-      boundaryGap: false,
-      data: satisfactionDateLabels,
-      axisLine: { show: false },
-      axisTick: { show: false },
-      axisLabel: {
-        color: "#94a3b8",
-        fontSize: 11,
-        margin: 14
-      }
-    },
-    yAxis: {
-      type: "value",
-      min: minSatisfactionValue - 0.8,
-      max: maxSatisfactionValue + 0.8,
-      splitNumber: 3,
-      axisLine: { show: false },
-      axisTick: { show: false },
-      axisLabel: { show: false },
-      splitLine: {
-        lineStyle: {
-          color: "#e2e8f0",
-          type: "dashed"
-        }
-      }
-    },
-    series: satisfactionSeries.value
-  });
-};
-
-onMounted(async () => {
-  await nextTick();
-  renderTrafficChart();
-  renderSatisfactionChart();
-
-  if (trafficChartRef.value) {
-    trafficChartObserver = new ResizeObserver(() => trafficChart?.resize());
-    trafficChartObserver.observe(trafficChartRef.value);
-  }
-
-  if (satisfactionChartRef.value) {
-    satisfactionChartObserver = new ResizeObserver(() => satisfactionChart?.resize());
-    satisfactionChartObserver.observe(satisfactionChartRef.value);
-  }
-});
-
-onBeforeUnmount(() => {
-  trafficChartObserver?.disconnect();
-  trafficChartObserver = null;
-  trafficChart?.dispose();
-  trafficChart = null;
-
-  satisfactionChartObserver?.disconnect();
-  satisfactionChartObserver = null;
-  satisfactionChart?.dispose();
-  satisfactionChart = null;
-});
-
-const statusVariantMap = {
-  完成: "success",
-  讲解中: "info",
-  待复核: "secondary"
-} as const;
 </script>
 
 <template>
-  <div class="space-y-5">
-    <section class="flex flex-col gap-3 rounded-[28px] border border-[color:var(--color-border)] bg-white px-6 py-6">
-      <div class="flex items-start justify-between gap-4">
+  <div class="space-y-4 min-[1800px]:space-y-3">
+    <section class="rounded-[8px] border border-[color:var(--color-border)] bg-white px-5 py-5 min-[1800px]:px-4 min-[1800px]:py-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p class="text-xs font-medium uppercase tracking-[0.28em] text-slate-400">Operations Overview</p>
-          <h1 class="mt-3 text-[30px] font-semibold tracking-tight text-slate-950">核心运营数据总览</h1>
+          <p class="text-xs font-medium uppercase tracking-[0.28em] text-slate-400">Dashboard</p>
+          <h1 class="mt-3 text-[30px] font-semibold tracking-tight text-slate-950">{{ selectedScenic?.scenicName ?? "景区数据看板" }}</h1>
           <p class="mt-2 max-w-3xl text-sm leading-7 text-slate-500">
-            聚焦当日与本周服务人次、热门问答、游客满意度趋势以及服务结构等核心运营数据。
+            页面已接到真实请求链路，开发环境通过 MSW 拦截 `/manage/*` 接口，后续只需要把 `VITE_API_BASE_URL` 切到真实网关即可。
           </p>
         </div>
-        <UiBadge variant="secondary">今日</UiBadge>
+        <div class="flex items-center gap-3">
+          <UiBadge variant="info">MSW 已启用</UiBadge>
+          <UiButton :disabled="generating || loading" @click="handleGenerateReport">
+            {{ generating ? "生成中..." : "重新生成日报" }}
+          </UiButton>
+        </div>
       </div>
 
-      <div class="grid gap-4 xl:grid-cols-4">
+      <Transition name="admin-fade" mode="out-in">
+      <div v-if="loading" key="dashboard-summary-skeleton" class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4 min-[1800px]:gap-3">
         <article
-          v-for="metric in serviceOverview"
-          :key="metric.label"
-          class="rounded-[24px] border border-[color:var(--color-border)] bg-slate-50 px-5 py-5"
+          v-for="item in summarySkeletonCards"
+          :key="`summary-skeleton-${item}`"
+          class="relative overflow-hidden rounded-[8px] border border-[#dbe6f6] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-4 py-4"
         >
-          <p class="text-sm text-slate-500">{{ metric.label }}</p>
-          <strong class="mt-4 block text-[34px] font-semibold tracking-tight text-slate-950">{{ metric.value }}</strong>
-          <p class="mt-3 text-xs text-slate-400">{{ metric.hint }}</p>
+          <div class="absolute inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,#dbeafe_0%,#bfdbfe_100%)]" />
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <UiSkeleton width="88px" height="12px" class="mb-4" />
+              <UiSkeleton width="124px" height="38px" />
+            </div>
+            <UiSkeleton width="42px" height="28px" />
+          </div>
+          <div class="mt-4 border-t border-[#e7eef8] pt-3">
+            <UiSkeleton width="100%" height="12px" />
+          </div>
         </article>
       </div>
+      <div v-else key="dashboard-summary-content" class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4 min-[1800px]:gap-3">
+        <article
+          v-for="metric in summaryCards"
+          :key="metric.label"
+          class="group relative overflow-hidden rounded-[8px] border border-[#dbe6f6] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
+        >
+          <div class="absolute inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,#2563eb_0%,#93c5fd_100%)]" />
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{{ metric.label }}</p>
+              <strong class="mt-4 block text-[32px] font-semibold tracking-[-0.03em] text-slate-950">{{ metric.value }}</strong>
+            </div>
+            <div class="mt-1 rounded-[8px] bg-[#eef4ff] px-2.5 py-1 text-[11px] font-medium text-[#2563eb]">KPI</div>
+          </div>
+          <div class="mt-4 flex items-center justify-between gap-3 border-t border-[#e7eef8] pt-3">
+            <p class="min-w-0 text-xs leading-5 text-slate-500">{{ metric.hint }}</p>
+            <span class="shrink-0 text-[11px] font-medium text-slate-400">实时</span>
+          </div>
+        </article>
+      </div>
+      </Transition>
     </section>
 
-    <section class="grid items-stretch gap-4 xl:grid-cols-2">
-      <UiCard class="rounded-[28px] px-6 py-6">
-        <div class="flex h-full min-h-[440px] flex-col">
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Traffic Trend</p>
-              <h2 class="mt-2 text-xl font-semibold text-slate-950">今日服务分时</h2>
-              <p class="mt-2 text-sm text-slate-500">覆盖全天主要时段的服务流量走势，方便识别高峰与回落区间。</p>
-            </div>
-            <UiBadge variant="secondary">今日</UiBadge>
+    <section class="grid gap-3 xl:grid-cols-[1.18fr_0.82fr] min-[1800px]:grid-cols-[1.24fr_0.76fr]">
+      <UiCard class="rounded-[8px] px-5 py-5 min-[1800px]:px-4 min-[1800px]:py-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Weekly Stats</p>
+            <h2 class="mt-2 text-xl font-semibold text-slate-950">近 7 天运营趋势</h2>
           </div>
-
-          <div class="mt-6 flex-1 rounded-[24px] border border-[color:var(--color-border)] bg-slate-50 px-5 py-5">
-            <div class="grid gap-3 sm:grid-cols-3">
-              <article class="rounded-[20px] bg-white px-4 py-4">
-                <p class="text-xs uppercase tracking-[0.16em] text-slate-400">Peak Hour</p>
-                <strong class="mt-3 block text-[30px] font-semibold text-slate-950">{{ timelinePeak.label }}</strong>
-                <p class="mt-2 text-sm text-slate-500">{{ timelinePeak.value }} 次服务请求</p>
-              </article>
-              <article class="rounded-[20px] bg-white px-4 py-4">
-                <p class="text-xs uppercase tracking-[0.16em] text-slate-400">Average</p>
-                <strong class="mt-3 block text-[30px] font-semibold text-slate-950">{{ timelineAverage }}</strong>
-                <p class="mt-2 text-sm text-slate-500">分时平均服务量</p>
-              </article>
-              <article class="rounded-[20px] bg-white px-4 py-4">
-                <p class="text-xs uppercase tracking-[0.16em] text-slate-400">Coverage</p>
-                <strong class="mt-3 block text-[30px] font-semibold text-slate-950">{{ serviceTimeline.length }}</strong>
-                <p class="mt-2 text-sm text-slate-500">全天监测时段</p>
-              </article>
-            </div>
-
-            <div class="mt-4 rounded-[22px] bg-white px-4 py-5">
-              <div ref="trafficChartRef" class="h-[300px] w-full"></div>
-            </div>
-          </div>
+          <UiBadge variant="secondary">{{ weeklyStats?.summary.daysWithData ?? 0 }} 天</UiBadge>
         </div>
+
+        <Transition name="admin-fade" mode="out-in">
+        <div v-if="loading" key="dashboard-weekly-skeleton" class="mt-5 space-y-3 min-[1800px]:grid min-[1800px]:grid-cols-2 min-[1800px]:gap-2.5 min-[1800px]:space-y-0">
+          <article
+            v-for="item in listSkeletonItems"
+            :key="`weekly-skeleton-${item}`"
+            class="rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 px-4 py-3"
+          >
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0 flex-1">
+                <UiSkeleton width="48px" height="16px" class="mb-2" />
+                <UiSkeleton width="78%" height="12px" />
+              </div>
+              <div class="w-[84px]">
+                <UiSkeleton width="100%" height="22px" class="mb-2" />
+                <UiSkeleton width="72%" height="12px" class="ml-auto" />
+              </div>
+            </div>
+          </article>
+        </div>
+        <div v-else key="dashboard-weekly-content" class="mt-5 space-y-3 min-[1800px]:grid min-[1800px]:grid-cols-2 min-[1800px]:gap-2.5 min-[1800px]:space-y-0">
+          <article
+            v-for="item in weeklyStats?.dailyStats ?? []"
+            :key="item.statDate"
+            class="rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 px-4 py-3"
+          >
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <p class="text-sm font-medium text-slate-900">{{ formatDateLabel(item.statDate) }}</p>
+                <p class="mt-1 text-xs text-slate-500">响应 {{ item.avgResponseTimeMs }} ms，满意度 {{ item.avgSatisfaction.toFixed(1) }}/5</p>
+              </div>
+              <div class="text-right">
+                <p class="text-lg font-semibold text-slate-950">{{ formatNumber(item.totalInteractions) }}</p>
+                <p class="text-xs text-slate-500">{{ formatNumber(item.uniqueVisitors) }} 访客</p>
+              </div>
+            </div>
+          </article>
+        </div>
+        </Transition>
       </UiCard>
 
-      <UiCard class="rounded-[28px] px-6 py-6">
-        <div class="flex h-full min-h-[440px] flex-col">
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Satisfaction Trend</p>
-              <h2 class="mt-2 text-xl font-semibold text-slate-950">游客满意度趋势</h2>
-              <p class="mt-2 text-sm text-slate-500">呈现最近一周满意度变化，观察服务体验的稳定性与波动幅度。</p>
-            </div>
-            <UiBadge variant="secondary">本周</UiBadge>
+      <UiCard class="rounded-[8px] px-5 py-5 min-[1800px]:px-4 min-[1800px]:py-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Latest Report</p>
+            <h2 class="mt-2 text-xl font-semibold text-slate-950">AI 每日报告</h2>
           </div>
+          <UiBadge variant="success">{{ latestReport?.aiGenerated === 1 ? "AI 生成" : "人工整理" }}</UiBadge>
+        </div>
 
-          <div class="mt-6 flex-1 rounded-[24px] border border-[color:var(--color-border)] bg-slate-50 px-5 py-5">
-            <div class="grid gap-3 sm:grid-cols-3">
-              <article class="rounded-[20px] bg-white px-4 py-4">
-                <p class="text-xs uppercase tracking-[0.16em] text-slate-400">Week Avg</p>
-                <strong class="mt-3 block text-[30px] font-semibold text-slate-950">95.5%</strong>
-                <p class="mt-2 text-sm text-emerald-600">较上周 +1.8%</p>
-              </article>
-              <article class="rounded-[20px] bg-white px-4 py-4">
-                <p class="text-xs uppercase tracking-[0.16em] text-slate-400">Best Day</p>
-                <strong class="mt-3 block text-[30px] font-semibold text-slate-950">
-                  {{ satisfactionDateLabels[bestSatisfactionIndex] }}
-                </strong>
-                <p class="mt-2 text-sm text-slate-500">
-                  {{ satisfactionTrend[bestSatisfactionIndex]?.value ?? "--" }}% 满意度
-                </p>
-              </article>
-              <article class="rounded-[20px] bg-white px-4 py-4">
-                <p class="text-xs uppercase tracking-[0.16em] text-slate-400">Range</p>
-                <strong class="mt-3 block text-[30px] font-semibold text-slate-950">3.0%</strong>
-                <p class="mt-2 text-sm text-slate-500">本周波动范围</p>
-              </article>
-            </div>
-
-            <div class="mt-4 rounded-[22px] bg-white px-4 py-5">
-              <div ref="satisfactionChartRef" class="h-[300px] w-full"></div>
-            </div>
+        <Transition name="admin-fade" mode="out-in">
+        <div v-if="loading" key="dashboard-report-skeleton" class="mt-4 space-y-3 rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 p-4">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <article class="rounded-[8px] bg-white px-4 py-3">
+              <UiSkeleton width="56px" height="12px" class="mb-3" />
+              <UiSkeleton width="90px" height="32px" />
+            </article>
+            <article class="rounded-[8px] bg-white px-4 py-3">
+              <UiSkeleton width="56px" height="12px" class="mb-3" />
+              <UiSkeleton width="90px" height="32px" />
+            </article>
+          </div>
+          <div>
+            <UiSkeleton width="72px" height="14px" class="mb-3" />
+            <UiSkeleton width="100%" height="12px" class="mb-2" />
+            <UiSkeleton width="84%" height="12px" />
+          </div>
+          <div>
+            <UiSkeleton width="72px" height="14px" class="mb-3" />
+            <UiSkeleton width="100%" height="12px" class="mb-2" />
+            <UiSkeleton width="92%" height="12px" class="mb-2" />
+            <UiSkeleton width="78%" height="12px" />
           </div>
         </div>
+        <div v-else-if="latestReport" key="dashboard-report-content" class="mt-4 space-y-3 rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 p-4">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <article class="rounded-[8px] bg-white px-4 py-3">
+              <p class="text-xs uppercase tracking-[0.16em] text-slate-400">互动量</p>
+              <strong class="mt-2 block text-2xl font-semibold text-slate-950">{{ formatNumber(latestReport.totalInteractions) }}</strong>
+            </article>
+            <article class="rounded-[8px] bg-white px-4 py-3">
+              <p class="text-xs uppercase tracking-[0.16em] text-slate-400">满意度</p>
+              <strong class="mt-2 block text-2xl font-semibold text-slate-950">{{ formatPercent(latestReport.satisfactionRate) }}</strong>
+            </article>
+          </div>
+          <div>
+            <p class="text-sm font-medium text-slate-900">策略摘要</p>
+            <p class="mt-2 text-sm leading-7 text-slate-600">{{ latestReport.suggestionSummary }}</p>
+          </div>
+          <div>
+            <p class="text-sm font-medium text-slate-900">服务建议</p>
+            <p class="mt-2 whitespace-pre-line text-sm leading-7 text-slate-600">{{ latestReport.serviceSuggest }}</p>
+          </div>
+        </div>
+        </Transition>
       </UiCard>
     </section>
 
-    <section class="grid gap-4 xl:grid-cols-[1fr_0.92fr_0.92fr]">
-      <UiCard class="rounded-[28px] px-5 py-5">
+    <section class="grid gap-3 xl:grid-cols-3 min-[1800px]:grid-cols-[1.25fr_1fr_1fr]">
+      <UiCard class="rounded-[8px] px-4 py-4 min-[1800px]:col-span-1">
         <div class="flex items-center justify-between">
           <div>
             <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Hot Questions</p>
-            <h3 class="mt-2 text-lg font-semibold text-slate-900">热门问答</h3>
+            <h3 class="mt-2 text-lg font-semibold text-slate-900">高频问题</h3>
           </div>
-          <UiBadge variant="secondary">Top 5</UiBadge>
+          <UiBadge variant="secondary">{{ hotQuestions?.totalCount ?? 0 }} 条</UiBadge>
         </div>
 
-        <div class="mt-6 space-y-3">
+        <Transition name="admin-fade" mode="out-in">
+        <div v-if="loading" key="dashboard-hot-skeleton" class="mt-5 space-y-3 min-[1800px]:grid min-[1800px]:grid-cols-2 min-[1800px]:gap-2.5 min-[1800px]:space-y-0">
           <article
-            v-for="item in hotQuestions"
-            :key="item.rank"
-            class="flex items-center justify-between gap-4 rounded-3xl border border-[color:var(--color-border)] bg-slate-50 px-4 py-4"
+            v-for="item in compactSkeletonItems"
+            :key="`hot-skeleton-${item}`"
+            class="rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 px-4 py-3"
           >
-            <div class="flex min-w-0 items-start gap-4">
-              <span class="text-sm font-semibold text-slate-400">{{ item.rank }}</span>
-              <p class="truncate text-sm font-medium text-slate-800">{{ item.question }}</p>
+            <div class="flex items-start justify-between gap-4">
+              <UiSkeleton width="74%" height="16px" />
+              <UiSkeleton width="30px" height="16px" />
             </div>
-            <span class="shrink-0 text-sm text-slate-500">{{ item.count }} 次</span>
+            <UiSkeleton width="88px" height="12px" class="mt-3" />
           </article>
         </div>
+        <div v-else key="dashboard-hot-content" class="mt-5 space-y-3 min-[1800px]:grid min-[1800px]:grid-cols-2 min-[1800px]:gap-2.5 min-[1800px]:space-y-0">
+          <article
+            v-for="item in hotQuestions?.hotQuestions ?? []"
+            :key="item.question"
+            class="rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 px-4 py-3"
+          >
+            <div class="flex items-start justify-between gap-4">
+              <p class="text-sm font-medium text-slate-900">{{ item.question }}</p>
+              <span class="shrink-0 text-sm text-slate-500">{{ item.count }}</span>
+            </div>
+            <p class="mt-2 text-xs text-emerald-600">帮助率 {{ formatRate(item.helpfulRate) }}</p>
+          </article>
+        </div>
+        </Transition>
       </UiCard>
 
-      <UiCard class="rounded-[28px] px-5 py-5">
+      <UiCard class="rounded-[8px] px-4 py-4">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Service Breakdown</p>
-            <h3 class="mt-2 text-lg font-semibold text-slate-900">服务结构占比</h3>
+            <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Focus Points</p>
+            <h3 class="mt-2 text-lg font-semibold text-slate-900">关注话题</h3>
           </div>
-          <UiBadge variant="secondary">今日</UiBadge>
+          <UiBadge variant="secondary">{{ focusPoints?.analysisDate ?? "--" }}</UiBadge>
         </div>
 
-        <div class="mt-6 space-y-3">
+        <Transition name="admin-fade" mode="out-in">
+        <div v-if="loading" key="dashboard-focus-skeleton" class="mt-5 space-y-3">
           <article
-            v-for="item in serviceBreakdown"
-            :key="item.label"
-            class="rounded-3xl border border-[color:var(--color-border)] px-4 py-4"
+            v-for="item in compactSkeletonItems"
+            :key="`focus-skeleton-${item}`"
+            class="rounded-[8px] border border-[color:var(--color-border)] px-4 py-3"
           >
             <div class="flex items-center justify-between gap-4">
-              <span class="text-sm text-slate-500">{{ item.label }}</span>
-              <strong class="text-lg font-semibold text-slate-900">{{ item.value }}</strong>
+              <div class="min-w-0 flex-1">
+                <UiSkeleton width="52%" height="16px" class="mb-2" />
+                <UiSkeleton width="68px" height="12px" />
+              </div>
+              <div class="w-[72px]">
+                <UiSkeleton width="100%" height="18px" class="mb-2" />
+                <UiSkeleton width="70%" height="12px" class="ml-auto" />
+              </div>
             </div>
           </article>
         </div>
+        <div v-else key="dashboard-focus-content" class="mt-5 space-y-3">
+          <article
+            v-for="item in focusPoints?.focusPoints ?? []"
+            :key="item.keyword"
+            class="rounded-[8px] border border-[color:var(--color-border)] px-4 py-3"
+          >
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <p class="text-sm font-medium text-slate-900">{{ item.keyword }}</p>
+                <p class="mt-1 text-xs text-slate-500">{{ sentimentTextMap[item.sentiment] }}情绪</p>
+              </div>
+              <div class="text-right">
+                <strong class="text-base font-semibold text-slate-900">{{ formatRate(item.percentage) }}</strong>
+                <p class="text-xs text-slate-500">{{ item.count }} 次</p>
+              </div>
+            </div>
+          </article>
+        </div>
+        </Transition>
       </UiCard>
 
-      <UiCard class="rounded-[28px] px-5 py-5">
+      <UiCard class="rounded-[8px] px-4 py-4">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Service Timeline</p>
-            <h3 class="mt-2 text-lg font-semibold text-slate-900">实时服务记录</h3>
+            <p class="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Sentiment</p>
+            <h3 class="mt-2 text-lg font-semibold text-slate-900">情绪与满意度</h3>
           </div>
-          <UiBadge variant="info">Live</UiBadge>
+          <UiBadge variant="success">{{ sentimentTextMap[emotionTrend?.overallSentiment ?? "neutral"] }}</UiBadge>
         </div>
 
-        <div class="mt-6 space-y-3">
-          <article
-            v-for="item in conversationPreview"
-            :key="`${item.time}-${item.user}`"
-            class="flex items-center justify-between gap-4 rounded-3xl border border-[color:var(--color-border)] px-4 py-4"
-          >
-            <div class="min-w-0">
-              <div class="flex items-center gap-3">
-                <span class="text-sm font-medium text-slate-900">{{ item.user }}</span>
-                <span class="text-xs text-slate-400">{{ item.time }}</span>
-              </div>
-              <p class="mt-2 truncate text-sm text-slate-500">{{ item.topic }}</p>
-            </div>
-            <UiBadge :variant="statusVariantMap[item.status as keyof typeof statusVariantMap] ?? 'secondary'">
-              {{ item.status }}
-            </UiBadge>
+        <Transition name="admin-fade" mode="out-in">
+        <div v-if="loading" key="dashboard-sentiment-skeleton" class="mt-5 space-y-3">
+          <article class="rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 px-4 py-3">
+            <UiSkeleton width="92px" height="14px" class="mb-3" />
+            <UiSkeleton width="98px" height="36px" />
           </article>
+          <article class="rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 px-4 py-3">
+            <UiSkeleton width="92px" height="14px" class="mb-3" />
+            <UiSkeleton width="98px" height="36px" class="mb-3" />
+            <UiSkeleton width="78px" height="12px" />
+          </article>
+          <div class="space-y-2">
+            <div
+              v-for="item in compactSkeletonItems"
+              :key="`sentiment-skeleton-${item}`"
+              class="flex items-center justify-between rounded-[8px] bg-slate-50 px-4 py-3"
+            >
+              <UiSkeleton width="48px" height="14px" />
+              <UiSkeleton width="54px" height="14px" />
+            </div>
+          </div>
         </div>
+        <div v-else key="dashboard-sentiment-content" class="mt-5 space-y-3">
+          <article class="rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 px-4 py-3">
+            <p class="text-sm text-slate-500">平均正向占比</p>
+            <strong class="mt-2 block text-3xl font-semibold text-slate-950">{{ formatRate(emotionTrend?.avgPositiveRate ?? 0) }}</strong>
+          </article>
+          <article class="rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 px-4 py-3">
+            <p class="text-sm text-slate-500">平均满意度</p>
+            <strong class="mt-2 block text-3xl font-semibold text-slate-950">{{ satisfactionTrend?.avgSatisfaction?.toFixed(2) ?? "--" }}</strong>
+            <p class="mt-2 text-xs text-slate-500">{{ directionTextMap[satisfactionTrend?.trendDirection ?? "stable"] }}</p>
+          </article>
+          <div class="space-y-2">
+            <div
+              v-for="item in emotionTrend?.trendData ?? []"
+              :key="item.date"
+              class="flex items-center justify-between rounded-[8px] bg-slate-50 px-4 py-3 text-sm"
+            >
+              <span class="text-slate-600">{{ formatDateLabel(item.date) }}</span>
+              <span class="font-medium text-slate-900">{{ formatRate(item.positiveRate) }}</span>
+            </div>
+          </div>
+        </div>
+        </Transition>
       </UiCard>
     </section>
   </div>

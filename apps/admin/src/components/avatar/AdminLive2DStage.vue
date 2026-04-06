@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     ref="hostRef"
-    class="relative h-full w-full overflow-hidden rounded-[32px] bg-[linear-gradient(180deg,#ffffff_0%,#eef6ff_100%)]"
+    class="relative h-full w-full overflow-hidden rounded-[12px] bg-[linear-gradient(180deg,#ffffff_0%,#eef6ff_100%)]"
     @pointermove="handlePointerMove"
     @pointerleave="handlePointerLeave"
     @click="handleStageTap"
@@ -131,7 +131,7 @@ onBeforeUnmount(() => {
       v-if="!isReady && !errorMessage"
       class="absolute inset-0 flex items-center justify-center"
     >
-      <div class="rounded-full bg-white/90 px-4 py-2 text-sm text-slate-500 shadow-[0_12px_30px_rgba(148,163,184,0.14)]">
+      <div class="rounded-[12px] bg-white/90 px-4 py-2 text-sm text-slate-500 shadow-[0_12px_30px_rgba(148,163,184,0.14)]">
         正在加载数字人预览...
       </div>
     </div>
@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
       v-if="errorMessage"
       class="absolute inset-0 flex items-center justify-center p-6"
     >
-      <div class="max-w-xs rounded-3xl bg-white/92 px-5 py-4 text-center text-sm leading-6 text-rose-500 shadow-[0_12px_30px_rgba(148,163,184,0.14)]">
+      <div class="max-w-xs rounded-[12px] bg-white/92 px-5 py-4 text-center text-sm leading-6 text-rose-500 shadow-[0_12px_30px_rgba(148,163,184,0.14)]">
         {{ errorMessage }}
       </div>
     </div>

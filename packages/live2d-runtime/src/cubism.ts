@@ -238,11 +238,11 @@ function updateModelMatrix(
 
   const viewAspect = width / Math.max(height, 1);
   const {
-    landscapeHeight = 1.5,
-    portraitHeight = 1.6,
-    scaleX = 2,
-    offsetX = 1.2,
-    offsetY = 0.5,
+    landscapeHeight = 1.5, // 宽屏高度
+    portraitHeight = 1.6, // 小屏高度
+    scaleX = 2, // X 轴缩放
+    offsetX = 1.2, // X 轴偏移量
+    offsetY = 0.5, // Y 轴偏移量
   } = layout;
 
   if (viewAspect > 1) {

@@ -7,7 +7,7 @@ defineProps<{
 </script>
 
 <template>
-  <section :class="cn('admin-surface rounded-3xl bg-white', $props.class)">
+  <section :class="cn('admin-surface rounded-[8px] bg-white', $props.class)">
     <slot />
   </section>
 </template>

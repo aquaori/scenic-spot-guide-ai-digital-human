@@ -9,8 +9,8 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@zrb/live2d-runtime": "file:../../packages/live2d-runtime",
     "@tailwindcss/vite": "^4.2.2",
+    "@zrb/live2d-runtime": "file:../../packages/live2d-runtime",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "echarts": "^6.0.0",
@@ -24,6 +24,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@vitejs/plugin-vue": "^6.0.1",
+    "msw": "^2.12.14",
     "typescript": "^5.8.3",
     "vite": "^7.0.0",
     "vue-tsc": "^3.0.1"
