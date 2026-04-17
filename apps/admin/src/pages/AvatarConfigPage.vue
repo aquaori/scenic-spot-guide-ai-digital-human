@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDefaultAvatarConfig } from "@zrb/avatar-runtime";
 import { computed, reactive, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useRoute, useRouter } from "vue-router";
@@ -30,12 +31,14 @@ const loading = ref(false);
 const saving = ref(false);
 const deleting = ref(false);
 
+const createAppearanceConfigString = () => JSON.stringify(createDefaultAvatarConfig(), null, 2);
+
 const profileForm = reactive<DigitalHumanForm>({
   id: null,
   scenicId: 0,
   humanName: "",
-  appearanceConfig: JSON.stringify({ model: "qwen-avatar-v2", enhancement: null }, null, 2),
-  voiceConfig: JSON.stringify({ voice: "xiaomei", speed: 1, pitch: 1 }, null, 2),
+  appearanceConfig: createAppearanceConfigString(),
+  voiceConfig: JSON.stringify({ voiceId: "xiaomei", speed: 1, pitch: 1, volume: 1, enableLipSync: true }, null, 2),
   lipSync: 1,
   defaultGreeting: "",
   avatarImage: "",
@@ -57,8 +60,8 @@ const fillProfileForm = (profile?: Partial<DigitalHumanForm> | null, scenicId = 
     id: profile?.id ?? null,
     scenicId,
     humanName: profile?.humanName ?? "",
-    appearanceConfig: profile?.appearanceConfig ?? JSON.stringify({ model: "qwen-avatar-v2", enhancement: null }, null, 2),
-    voiceConfig: profile?.voiceConfig ?? JSON.stringify({ voice: "xiaomei", speed: 1, pitch: 1 }, null, 2),
+    appearanceConfig: profile?.appearanceConfig ?? createAppearanceConfigString(),
+    voiceConfig: profile?.voiceConfig ?? JSON.stringify({ voiceId: "xiaomei", speed: 1, pitch: 1, volume: 1, enableLipSync: true }, null, 2),
     lipSync: profile?.lipSync ?? 1,
     defaultGreeting: profile?.defaultGreeting ?? "",
     avatarImage: profile?.avatarImage ?? "",

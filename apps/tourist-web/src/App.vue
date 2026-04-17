@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import Live2DStage from "./components/avatar/Live2DStage.vue";
+import AvatarStage from "./components/avatar/AvatarStage.vue";
 import UiBadge from "./components/ui/UiBadge.vue";
 import UiCard from "./components/ui/UiCard.vue";
 import {
@@ -402,7 +402,7 @@ onBeforeUnmount(() => {
           <div class="absolute inset-x-8 top-8 bottom-8 rounded-[34px] border border-sky-100/80"></div>
           <div class="absolute inset-x-[14%] top-[5%] bottom-[5%] rounded-[40px] bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(239,246,255,0.48))] shadow-[inset_0_0_0_1px_rgba(186,230,253,0.35)]"></div>
           <div class="absolute inset-0 z-10">
-            <Live2DStage />
+            <AvatarStage />
           </div>
         </div>
       </aside>

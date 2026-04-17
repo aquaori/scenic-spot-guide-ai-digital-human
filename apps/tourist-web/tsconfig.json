@@ -8,7 +8,6 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "src/**/*.vue",
-    "../../packages/live2d-runtime/src/**/*.ts",
-    "../../packages/live2d-runtime/src/**/*.d.ts"
+    "../../packages/avatar-runtime/src/**/*.ts"
   ]
 }

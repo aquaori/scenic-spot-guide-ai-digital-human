@@ -4,11 +4,12 @@ import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
+  publicDir: fileURLToPath(new URL("../../assets", import.meta.url)),
   plugins: [vue(), tailwindcss()],
-  publicDir: fileURLToPath(new URL("../../packages/live2d-assets/public", import.meta.url)),
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@zrb/avatar-runtime": fileURLToPath(new URL("../../packages/avatar-runtime/src/index.ts", import.meta.url)),
       "@zrb/shared-api": fileURLToPath(new URL("../../packages/shared-api/src/index.ts", import.meta.url)),
       "@zrb/shared-types": fileURLToPath(new URL("../../packages/shared-types/src/index.ts", import.meta.url)),
       "@zrb/shared-utils": fileURLToPath(new URL("../../packages/shared-utils/src/index.ts", import.meta.url)),

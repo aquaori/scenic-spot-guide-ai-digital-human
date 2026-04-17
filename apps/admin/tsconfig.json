@@ -6,8 +6,18 @@
     "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@zrb/avatar-runtime": ["../../packages/avatar-runtime/src/index.ts"],
+      "@zrb/shared-api": ["../../packages/shared-api/src/index.ts"],
+      "@zrb/shared-types": ["../../packages/shared-types/src/index.ts"],
+      "@zrb/shared-utils": ["../../packages/shared-utils/src/index.ts"],
+      "@zrb/ui": ["../../packages/ui/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.vue",
+    "../../packages/avatar-runtime/src/**/*.ts"
+  ]
 }

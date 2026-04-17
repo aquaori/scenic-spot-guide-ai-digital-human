@@ -9,14 +9,17 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@zrb/live2d-runtime": "file:../../packages/live2d-runtime",
+    "@pixiv/three-vrm": "^3.4.2",
+    "@zrb/avatar-runtime": "file:../../packages/avatar-runtime",
     "pinia": "^3.0.3",
+    "three": "^0.180.0",
     "vue": "^3.5.13",
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^24.0.0",
+    "@types/three": "^0.180.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.8.3",

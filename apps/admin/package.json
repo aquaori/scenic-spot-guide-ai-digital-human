@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
-    "@zrb/live2d-runtime": "file:../../packages/live2d-runtime",
+    "@pixiv/three-vrm": "^3.4.2",
+    "@zrb/avatar-runtime": "file:../../packages/avatar-runtime",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "echarts": "^6.0.0",
@@ -18,11 +19,13 @@
     "pinia": "^3.0.3",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2",
+    "three": "^0.180.0",
     "vue": "^3.5.13",
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/three": "^0.180.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "msw": "^2.12.14",
     "typescript": "^5.8.3",

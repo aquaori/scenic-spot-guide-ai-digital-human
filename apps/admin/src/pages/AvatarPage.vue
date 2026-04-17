@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { createDefaultAvatarConfig, type AvatarConfig } from "@zrb/avatar-runtime";
 import { computed, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
-import AdminLive2DStage from "@/components/avatar/AdminLive2DStage.vue";
+import AdminAvatarStage from "@/components/avatar/AdminAvatarStage.vue";
 import UiBadge from "@/components/ui/UiBadge.vue";
 import UiButton from "@/components/ui/UiButton.vue";
 import UiCard from "@/components/ui/UiCard.vue";
@@ -22,6 +23,18 @@ const activePreviewId = ref<number | null>(null);
 const profileSkeletonItems = Array.from({ length: 3 }, (_, index) => index);
 
 const activeProfile = computed(() => profiles.value.find((item) => item.id === activePreviewId.value) ?? profiles.value[0] ?? null);
+const activeAvatarConfig = computed<AvatarConfig>(() => {
+  const value = activeProfile.value?.appearanceConfig;
+  if (!value) {
+    return createDefaultAvatarConfig();
+  }
+
+  try {
+    return createDefaultAvatarConfig(JSON.parse(value) as Partial<AvatarConfig>);
+  } catch {
+    return createDefaultAvatarConfig();
+  }
+});
 
 const parseJson = (value: string) => {
   try {
@@ -238,7 +251,7 @@ watch(
           <div class="rounded-[8px] border border-[#d8e4f6] bg-[linear-gradient(180deg,#fafcff_0%,#edf4ff_100%)] p-4">
             <div class="mx-auto max-w-[540px]">
               <div class="aspect-[8/14] overflow-hidden rounded-[8px] border border-white/80 bg-[linear-gradient(180deg,#ffffff_0%,#f4f8ff_100%)] shadow-[0_18px_40px_rgba(148,163,184,0.14)]">
-                <AdminLive2DStage />
+                <AdminAvatarStage :config="activeAvatarConfig" />
               </div>
             </div>
           </div>
