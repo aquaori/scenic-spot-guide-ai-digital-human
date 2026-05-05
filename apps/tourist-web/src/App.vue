@@ -1,28 +1,93 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AvatarStage from "./components/avatar/AvatarStage.vue";
+import StreamingMarkdown from "./components/chat/StreamingMarkdown.vue";
 import UiBadge from "./components/ui/UiBadge.vue";
 import UiCard from "./components/ui/UiCard.vue";
 import {
-  conversationMock,
-  quickPromptsMock,
+  touristApi,
+  type TouristDigitalHuman
+} from "./api/tourist";
+import {
   topFeaturesMock,
   type ConversationMessage
 } from "./mocks/guide";
+import { getInitialMockConversation, getMockQuickPrompts } from "./mocks/api";
 
 type VoiceComposerMode = "text" | "press" | "recording";
 type RecordingDisposition = "send" | "cancel";
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
+interface SpeechRecognitionResultLike {
+  readonly isFinal: boolean;
+  readonly 0: {
+    readonly transcript: string;
+  };
+}
+
+interface SpeechRecognitionEventLike extends Event {
+  readonly resultIndex: number;
+  readonly results: ArrayLike<SpeechRecognitionResultLike>;
+}
+
+interface SpeechRecognitionLike extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+const SESSION_STORAGE_KEY = "tourist-chat-session-id";
+
+function getStoredSessionId() {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(SESSION_STORAGE_KEY)?.trim() ?? "";
+}
+
+function persistSessionId(value: string) {
+  if (typeof window === "undefined") return;
+  if (!value) {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(SESSION_STORAGE_KEY, value);
+}
 
 const messageScrollRef = ref<HTMLElement | null>(null);
 const composerTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const draftMessage = ref("");
 const voiceMode = ref<VoiceComposerMode>("text");
-const conversation = ref<ConversationMessage[]>([...conversationMock]);
+const conversation = ref<ConversationMessage[]>([]);
+const isSending = ref(false);
+const previousSessionId = getStoredSessionId();
+const sessionId = ref("");
+const visitorId = ref<number>(1);
+const scenicId = ref<number>(1);
+const digitalHuman = ref<TouristDigitalHuman | null>(null);
+const bootstrapError = ref("");
+const pendingAssistantMessageId = ref<string | null>(null);
+const speechRecognition = ref<SpeechRecognitionLike | null>(null);
+const recognizedTranscript = ref("");
+const interimTranscript = ref("");
+const voiceErrorMessage = ref("");
+let speechRecognitionStopPromise: Promise<string> | null = null;
+let resolveSpeechRecognitionStopPromise: ((transcript: string) => void) | null = null;
+let pendingSpeechTranscriptPromise: Promise<string> | null = null;
 
 const hasDraftMessage = computed(() => draftMessage.value.trim().length > 0);
+const shouldHighlightPrimaryButton = computed(() => hasDraftMessage.value || isSending.value);
 const composerView = computed<VoiceComposerMode>(() => (hasDraftMessage.value ? "text" : voiceMode.value));
 const topFeatures = topFeaturesMock;
-const quickPrompts = quickPromptsMock;
+const quickPrompts = getMockQuickPrompts();
+const pageTitle = computed(() => digitalHuman.value?.humanName ?? "景区导览 AI 数字人");
+const hasUserMessages = computed(() => conversation.value.some((message) => message.role === "user"));
+const visibleQuickPrompts = computed(() => [] as string[]);
+const isAtBottom = ref(true);
+const showScrollToBottom = computed(() => !isAtBottom.value);
 
 const longPressTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 const activePointerId = ref<number | null>(null);
@@ -48,10 +113,114 @@ const voiceInstruction = computed(() =>
 const waveColorClass = computed(() =>
   recordingWillCancel.value ? "bg-rose-400" : "bg-[#3b82f6]"
 );
+const sendActionIconPath = ref("");
+const iconMorphFrame = ref<number | null>(null);
+
+const sendArrowPoints = [
+  [12, 4.5],
+  [19, 11.5],
+  [15, 11.5],
+  [15, 19],
+  [9, 19],
+  [9, 11.5],
+  [5, 11.5],
+  [12, 4.5]
+] as const;
+
+const stopSquarePoints = [
+  [6.8, 6.8],
+  [12, 6.8],
+  [17.2, 6.8],
+  [17.2, 12],
+  [17.2, 17.2],
+  [12, 17.2],
+  [6.8, 17.2],
+  [6.8, 12]
+] as const;
+
+function buildSendActionIconPath(progress: number) {
+  const points = sendArrowPoints.map(([arrowX, arrowY], index) => {
+    const [squareX, squareY] = stopSquarePoints[index];
+    const x = arrowX + (squareX - arrowX) * progress;
+    const y = arrowY + (squareY - arrowY) * progress;
+    return `${x.toFixed(3)} ${y.toFixed(3)}`;
+  });
+
+  return `M${points[0]} L${points.slice(1).join(" L")} Z`;
+}
+
+function easeIconMorph(progress: number) {
+  return 1 - Math.pow(1 - progress, 3);
+}
+
+function stopIconMorphAnimation() {
+  if (iconMorphFrame.value !== null) {
+    cancelAnimationFrame(iconMorphFrame.value);
+    iconMorphFrame.value = null;
+  }
+}
+
+function animateSendActionIcon(from: number, to: number) {
+  stopIconMorphAnimation();
+
+  const duration = 180;
+  const startAt = performance.now();
+
+  const tick = (now: number) => {
+    const elapsed = Math.min((now - startAt) / duration, 1);
+    const eased = easeIconMorph(elapsed);
+    sendActionIconPath.value = buildSendActionIconPath(from + (to - from) * eased);
+
+    if (elapsed < 1) {
+      iconMorphFrame.value = requestAnimationFrame(tick);
+      return;
+    }
+
+    iconMorphFrame.value = null;
+  };
+
+  sendActionIconPath.value = buildSendActionIconPath(from);
+  iconMorphFrame.value = requestAnimationFrame(tick);
+}
 
 function scrollMessagesToBottom() {
   if (!messageScrollRef.value) return;
   messageScrollRef.value.scrollTop = messageScrollRef.value.scrollHeight;
+}
+
+function isMessageScrollAtBottom() {
+  if (!messageScrollRef.value) return true;
+
+  const { scrollTop, clientHeight, scrollHeight } = messageScrollRef.value;
+  return scrollHeight - (scrollTop + clientHeight) <= 24;
+}
+
+function syncBottomState() {
+  isAtBottom.value = isMessageScrollAtBottom();
+}
+
+function scrollMessagesToBottomSmooth() {
+  if (!messageScrollRef.value) return;
+  messageScrollRef.value.scrollTo({
+    top: messageScrollRef.value.scrollHeight,
+    behavior: "smooth"
+  });
+  isAtBottom.value = true;
+}
+
+function maybeKeepMessagesPinnedToBottom() {
+  nextTick(() => {
+    if (!isAtBottom.value) {
+      return;
+    }
+
+    scrollMessagesToBottom();
+    syncBottomState();
+  });
+}
+
+function handleMessageScroll() {
+  syncBottomState();
 }
 
 function syncComposerHeight() {
@@ -166,10 +335,116 @@ function clearLongPressTimer() {
   longPressTimer.value = null;
 }
 
+function getSpeechRecognitionCtor() {
+  const SpeechRecognitionApi = (
+    window as typeof window & {
+      SpeechRecognition?: SpeechRecognitionCtor;
+      webkitSpeechRecognition?: SpeechRecognitionCtor;
+    }
+  ).SpeechRecognition ?? (
+    window as typeof window & {
+      SpeechRecognition?: SpeechRecognitionCtor;
+      webkitSpeechRecognition?: SpeechRecognitionCtor;
+    }
+  ).webkitSpeechRecognition;
+
+  return SpeechRecognitionApi ?? null;
+}
+
+function resetSpeechRecognitionState() {
+  recognizedTranscript.value = "";
+  interimTranscript.value = "";
+}
+
+function finalizeSpeechRecognition() {
+  const transcript = `${recognizedTranscript.value}${interimTranscript.value}`.trim();
+
+  if (resolveSpeechRecognitionStopPromise) {
+    resolveSpeechRecognitionStopPromise(transcript);
+  }
+
+  resolveSpeechRecognitionStopPromise = null;
+  speechRecognitionStopPromise = null;
+}
+
+function stopSpeechRecognition() {
+  if (!speechRecognition.value) {
+    return Promise.resolve(`${recognizedTranscript.value}${interimTranscript.value}`.trim());
+  }
+
+  const instance = speechRecognition.value;
+  speechRecognitionStopPromise =
+    speechRecognitionStopPromise ??
+    new Promise<string>((resolve) => {
+      resolveSpeechRecognitionStopPromise = resolve;
+    });
+  speechRecognition.value = null;
+  instance.stop();
+  return speechRecognitionStopPromise;
+}
+
+function startSpeechRecognition() {
+  resetSpeechRecognitionState();
+  voiceErrorMessage.value = "";
+
+  const SpeechRecognitionApi = getSpeechRecognitionCtor();
+  if (!SpeechRecognitionApi) {
+    voiceErrorMessage.value = "当前浏览器不支持语音转文字";
+    return;
+  }
+
+  const recognition = new SpeechRecognitionApi();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = "zh-CN";
+
+  recognition.onresult = (event) => {
+    let finals = "";
+    let interim = "";
+
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const result = event.results[index];
+      const transcript = result[0]?.transcript?.trim() ?? "";
+
+      if (!transcript) {
+        continue;
+      }
+
+      if (result.isFinal) {
+        finals += transcript;
+      } else {
+        interim += transcript;
+      }
+    }
+
+    if (finals) {
+      recognizedTranscript.value = `${recognizedTranscript.value}${finals}`.trim();
+    }
+
+    interimTranscript.value = interim.trim();
+  };
+
+  recognition.onerror = (event) => {
+    console.warn("[voice] 语音识别失败", event);
+    voiceErrorMessage.value = "语音识别失败，请重试";
+  };
+
+  recognition.onend = () => {
+    if (speechRecognition.value === recognition) {
+      speechRecognition.value = null;
+    }
+    finalizeSpeechRecognition();
+  };
+
+  speechRecognition.value = recognition;
+  recognition.start();
+}
+
 async function finishRecording(disposition: RecordingDisposition) {
   recordingDisposition.value = disposition;
   removeRecordingListeners();
   clearLongPressTimer();
+  pendingSpeechTranscriptPromise = stopSpeechRecognition();
 
   if (!mediaRecorder.value) {
     voiceMode.value = "text";
@@ -203,6 +478,7 @@ async function startRecording(pointerId: number, clientY: number) {
 
   try {
     await setupAudioStream();
+    startSpeechRecognition();
 
     if (!mediaStream.value) {
       throw new Error("麦克风流获取失败");
@@ -224,6 +500,7 @@ async function startRecording(pointerId: number, clientY: number) {
     };
 
     recorder.onstop = async () => {
+      const transcript = (await (pendingSpeechTranscriptPromise ?? Promise.resolve(""))).trim();
       const blob = new Blob(recordedChunks.value, {
         type: recorder.mimeType || "audio/webm"
       });
@@ -236,12 +513,20 @@ async function startRecording(pointerId: number, clientY: number) {
         recordedUrl.value = URL.createObjectURL(blob);
         console.log("[voice] 录音结束");
         console.log("[voice] 文件地址:", recordedUrl.value);
+
+        if (transcript) {
+          void sendMessage(transcript);
+        } else {
+          voiceErrorMessage.value = voiceErrorMessage.value || "未识别到语音内容，请重试";
+        }
       } else {
         console.log("[voice] 录音取消");
       }
 
       mediaRecorder.value = null;
       recordedChunks.value = [];
+      pendingSpeechTranscriptPromise = null;
+      resetSpeechRecognitionState();
       await cleanupAudioStream();
     };
 
@@ -252,6 +537,9 @@ async function startRecording(pointerId: number, clientY: number) {
     recordingWillCancel.value = false;
     activePointerId.value = null;
     removeRecordingListeners();
+    stopSpeechRecognition();
+    pendingSpeechTranscriptPromise = null;
+    resetSpeechRecognitionState();
     await cleanupAudioStream();
   }
 }
@@ -284,24 +572,117 @@ function handleRecordingPointerCancel(event: PointerEvent) {
 
 function appendMessage(message: ConversationMessage) {
   conversation.value.push(message);
-
-  nextTick(() => {
-    scrollMessagesToBottom();
-  });
+  maybeKeepMessagesPinnedToBottom();
 }
 
-function sendDraftMessage() {
-  const content = draftMessage.value.trim();
-  if (!content) return;
+function updateAssistantMessage(id: string, patch: Partial<ConversationMessage>) {
+  const target = conversation.value.find((message) => message.id === id);
+  if (!target) return;
+  Object.assign(target, patch);
+  maybeKeepMessagesPinnedToBottom();
+}
 
+async function sendMessage(rawMessage: string) {
+  const content = rawMessage.trim();
+  if (!content) return;
+  if (isSending.value) return;
+
+  const assistantMessageId = `assistant-${Date.now()}`;
   appendMessage({
     id: `user-${Date.now()}`,
     role: "user",
     content
   });
+  appendMessage({
+    id: assistantMessageId,
+    role: "assistant",
+    content: "",
+    isStreaming: true
+  });
+  pendingAssistantMessageId.value = assistantMessageId;
 
   draftMessage.value = "";
   voiceMode.value = "text";
+  isSending.value = true;
+
+  let nextContent = "";
+  let streamFailed = false;
+
+  try {
+    await touristApi.openStream(
+      {
+        message: content,
+        visitorId: visitorId.value,
+        ...(sessionId.value ? { sessionId: sessionId.value } : {}),
+        scenicId: scenicId.value
+      },
+      {
+        onEvent(event) {
+          if (event.event === "metadata") {
+            if (event.sessionId) {
+              sessionId.value = event.sessionId;
+            }
+            updateAssistantMessage(assistantMessageId, {
+              attachments: event.attachments
+            });
+            return;
+          }
+
+          if (event.event === "answer" || event.event === "answer_fragment") {
+            nextContent += event.content;
+            pendingAssistantMessageId.value = null;
+            updateAssistantMessage(assistantMessageId, {
+              content: nextContent,
+              isStreaming: true
+            });
+            return;
+          }
+
+          if (event.event === "done") {
+            updateAssistantMessage(assistantMessageId, {
+              isStreaming: false
+            });
+            return;
+          }
+
+          if (event.event === "error") {
+            streamFailed = true;
+            pendingAssistantMessageId.value = null;
+            updateAssistantMessage(assistantMessageId, {
+              content: event.message || "当前暂时无法完成回答，请稍后重试。",
+              isStreaming: false
+            });
+          }
+        }
+      }
+    );
+  } catch (error) {
+    streamFailed = true;
+    console.error("[tourist] 发送消息失败", error);
+    pendingAssistantMessageId.value = null;
+    updateAssistantMessage(assistantMessageId, {
+      content: error instanceof Error ? error.message : "当前暂时无法完成回答，请稍后重试。",
+      isStreaming: false
+    });
+  } finally {
+    if (!nextContent && !streamFailed) {
+      updateAssistantMessage(assistantMessageId, {
+        content: "当前没有收到有效回复，请稍后再试。",
+        isStreaming: false
+      });
+    }
+    if (pendingAssistantMessageId.value === assistantMessageId) {
+      pendingAssistantMessageId.value = null;
+    }
+    updateAssistantMessage(assistantMessageId, {
+      isStreaming: false
+    });
+    isSending.value = false;
+  }
+}
+
+function sendDraftMessage() {
+  void sendMessage(draftMessage.value);
 }
 
 async function insertComposerNewline() {
@@ -366,8 +747,38 @@ function restoreTextComposer() {
 }
 
 onMounted(async () => {
+  sendActionIconPath.value = buildSendActionIconPath(isSending.value ? 1 : 0);
+
+  if (previousSessionId) {
+    try {
+      await touristApi.endChat({
+        sessionId: previousSessionId,
+        visitorId: visitorId.value,
+        scenicId: scenicId.value
+      });
+    } catch (error) {
+      console.error("[tourist] Failed to end previous session", error);
+    } finally {
+      persistSessionId("");
+    }
+  }
+
+  try {
+    const bootstrap = await touristApi.getBootstrap({ id: scenicId.value });
+    scenicId.value = bootstrap.data.scenicId;
+    digitalHuman.value = bootstrap.data.digitalHuman;
+    conversation.value = getInitialMockConversation(
+      bootstrap.data.digitalHuman?.defaultGreeting ?? "欢迎来到景区，我可以为你提供路线、景点和讲解建议。"
+    );
+    bootstrapError.value = "";
+  } catch (error) {
+    console.error("[tourist] Bootstrap failed", error);
+    bootstrapError.value = error instanceof Error ? error.message : "初始化失败";
+    conversation.value = [];
+  }
   await nextTick();
   scrollMessagesToBottom();
+  syncBottomState();
   syncComposerHeight();
   resetWaveform();
 });
@@ -381,13 +792,33 @@ watch(draftMessage, async () => {
   }
 });
 
+watch(isSending, (nextValue, previousValue) => {
+  animateSendActionIcon(previousValue ? 1 : 0, nextValue ? 1 : 0);
+});
+
+watch(sessionId, (nextValue) => {
+  persistSessionId(nextValue);
+});
+
 onBeforeUnmount(() => {
+  stopIconMorphAnimation();
   clearLongPressTimer();
   removeRecordingListeners();
+  stopSpeechRecognition();
+  pendingSpeechTranscriptPromise = null;
+  resetSpeechRecognitionState();
 
   if (recordedUrl.value) {
     URL.revokeObjectURL(recordedUrl.value);
     recordedUrl.value = null;
+  }
+
+  if (hasUserMessages.value && sessionId.value) {
+    void touristApi.endChat({
+      sessionId: sessionId.value,
+      visitorId: visitorId.value,
+      scenicId: scenicId.value
+    });
   }
 
   void cleanupAudioStream();
@@ -419,7 +850,7 @@ onBeforeUnmount(() => {
               </div>
               <div>
                 <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Conversation</p>
-                <h2 class="mt-1 text-sm font-semibold text-slate-900 sm:text-base">景区导览 AI 数字人</h2>
+                <h2 class="mt-1 text-sm font-semibold text-slate-900 sm:text-base">{{ pageTitle }}</h2>
               </div>
             </div>
 
@@ -439,8 +870,16 @@ onBeforeUnmount(() => {
           ref="messageScrollRef"
           class="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#ffffff_0px,rgba(255,255,255,0)_120px),linear-gradient(180deg,#ffffff_0%,#ffffff_100%)]"
           @pointerdown="restoreTextComposer"
+          @scroll="handleMessageScroll"
         >
           <div class="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 pb-56 pt-3 sm:px-5 lg:max-w-[56rem] xl:max-w-[60rem] xl:gap-6 xl:pb-60 xl:pt-4 2xl:max-w-6xl 2xl:px-6">
+            <div
+              v-if="bootstrapError"
+              class="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm leading-7 text-rose-600"
+            >
+              接口初始化失败：{{ bootstrapError }}
+            </div>
+
             <div
               v-for="message in conversation"
               :key="message.id"
@@ -451,7 +890,22 @@ onBeforeUnmount(() => {
                   ? 'rounded-2xl bg-[#f3f4f6] px-5 py-4'
                   : 'rounded-2xl bg-white px-5 py-4'"
               >
-                <div class="whitespace-pre-line break-words [overflow-wrap:anywhere] text-[15px] leading-8 text-slate-700">
+                <div
+                  v-if="message.role === 'assistant' && pendingAssistantMessageId === message.id && !message.content"
+                  class="text-[15px] text-slate-500"
+                >
+                  <span class="thinking-shimmer inline-block font-medium">
+                    正在思考
+                  </span>
+                </div>
+
+                <StreamingMarkdown
+                  v-else-if="message.role === 'assistant'"
+                  :content="message.content"
+                  :streaming="message.isStreaming"
+                />
+
+                <div v-else class="whitespace-pre-line break-words [overflow-wrap:anywhere] text-[15px] leading-8 text-slate-700">
                   {{ message.content }}
                 </div>
               </div>
@@ -528,16 +982,18 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="w-full max-w-[94%] pb-2 xl:max-w-[88%] 2xl:max-w-[84%]">
+            <div v-if="visibleQuickPrompts.length" class="w-full max-w-[94%] pb-2 xl:max-w-[88%] 2xl:max-w-[84%]">
               <div class="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
                 继续追问
               </div>
               <div class="flex flex-col gap-2">
                 <button
-                  v-for="prompt in quickPrompts"
+                  v-for="prompt in visibleQuickPrompts"
                   :key="prompt"
                   type="button"
                   class="w-fit max-w-full cursor-pointer rounded-[18px] bg-[#f1f3f5] px-4 py-3 text-left text-[15px] font-medium leading-6 text-slate-700 transition duration-200 hover:-translate-y-0.5 hover:bg-[#eceff2]"
+                  :disabled="isSending"
+                  @click="sendMessage(prompt)"
                 >
                   {{ prompt }}
                 </button>
@@ -550,6 +1006,29 @@ onBeforeUnmount(() => {
           <div
             class="mx-auto w-full max-w-4xl transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:max-w-[56rem] xl:max-w-[60rem] 2xl:max-w-6xl"
           >
+            <Transition
+              enter-active-class="transition duration-220 ease-[cubic-bezier(0.22,1,0.36,1)]"
+              enter-from-class="translate-y-2 scale-95 opacity-0"
+              enter-to-class="translate-y-0 scale-100 opacity-100"
+              leave-active-class="transition duration-180 ease-in-out"
+              leave-from-class="translate-y-0 scale-100 opacity-100"
+              leave-to-class="translate-y-1 scale-95 opacity-0"
+            >
+              <div v-if="showScrollToBottom" class="mb-3 flex justify-center">
+                <button
+                  type="button"
+                  class="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#00000012] bg-white text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.10)] transition hover:-translate-y-0.5 hover:text-slate-700"
+                  aria-label="跳到底部"
+                  @click="scrollMessagesToBottomSmooth"
+                >
+                  <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path d="m6 9 6 6 6-6" />
+                    <path d="M6 5h12" opacity="0" />
+                  </svg>
+                </button>
+              </div>
+            </Transition>
+
             <div
               class="pointer-events-auto soft-float overflow-hidden rounded-[28px] bg-white transition-[border-color,box-shadow,transform,max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
               :class="composerView === 'text'
@@ -579,10 +1058,11 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-all duration-200 ease-out"
-                    :class="hasDraftMessage
+                    :class="shouldHighlightPrimaryButton
                       ? 'bg-black text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)] hover:bg-slate-800'
                       : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700'"
-                    :aria-label="hasDraftMessage ? '发送消息' : '语音输入'"
+                    :disabled="isSending"
+                    :aria-label="isSending ? '停止输出' : hasDraftMessage ? '发送消息' : '语音输入'"
                     @pointerdown="handlePrimaryButtonPointerDown"
                     @pointerup="handlePrimaryButtonPointerUp"
                     @pointerleave="handlePrimaryButtonPointerLeave"
@@ -595,7 +1075,7 @@ onBeforeUnmount(() => {
                         stroke-width="1.8"
                         aria-hidden="true"
                         class="absolute inset-0 h-5 w-5 transition-all duration-250 ease-out"
-                        :class="hasDraftMessage
+                        :class="shouldHighlightPrimaryButton
                           ? 'translate-y-[-140%] opacity-0 scale-90'
                           : 'translate-y-0 opacity-100 scale-100'"
                       >
@@ -606,16 +1086,23 @@ onBeforeUnmount(() => {
                       <svg
                         viewBox="0 0 24 24"
                         fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
                         aria-hidden="true"
                         class="absolute inset-0 h-5 w-5 transition-all duration-250 ease-out"
-                        :class="hasDraftMessage
-                          ? 'translate-y-0 opacity-100 scale-100'
-                          : 'translate-y-[140%] opacity-0 scale-90'"
+                        :class="isSending
+                          ? 'translate-y-0 opacity-100 scale-200'
+                          : hasDraftMessage
+                            ? 'translate-y-0 opacity-100 scale-100'
+                            : 'translate-y-[140%] opacity-0 scale-90'"
                       >
-                        <path d="M12 5v14" />
-                        <path d="m19 12-7-7-7 7" />
+                        <path
+                          v-if="isSending"
+                          d="M8 8h8v8H8Z"
+                          fill="currentColor"
+                        />
+                        <template v-else>
+                          <path d="M12 5v14" fill="none" stroke="currentColor" stroke-width="1.8" />
+                          <path d="m19 12-7-7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" />
+                        </template>
                       </svg>
                     </span>
                   </button>
@@ -648,6 +1135,12 @@ onBeforeUnmount(() => {
                     >
                       继续上滑可取消本次录音
                     </p>
+                    <p
+                      v-else-if="voiceErrorMessage"
+                      class="text-xs font-medium text-amber-500"
+                    >
+                      {{ voiceErrorMessage }}
+                    </p>
                   </div>
 
                   <div class="relative flex h-14 w-full items-center justify-center gap-[6px]">
@@ -668,3 +1161,24 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+@keyframes thinking-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.thinking-shimmer {
+  color: transparent;
+  background-image: linear-gradient(90deg, #94a3b8 0%, #cbd5e1 24%, #ffffff 42%, #cbd5e1 60%, #94a3b8 100%);
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: thinking-shimmer 2.2s linear infinite;
+}
+</style>

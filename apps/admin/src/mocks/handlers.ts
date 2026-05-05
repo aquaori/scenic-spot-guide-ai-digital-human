@@ -11,7 +11,9 @@ import {
   knowledgeDocs,
   satisfactionTrendByScenic,
   scenicList,
+  scenicSpots,
   todayOverviewByScenic,
+  tourRoutes,
   weeklyStatsByScenic
 } from "@/mocks/data";
 import type { DigitalHuman, FaqItem, KnowledgeDoc, Scenic } from "@/types/admin";
@@ -42,6 +44,11 @@ const unauthorizedResponse = () =>
     },
     { status: 401 }
   );
+
+const getCurrentUser = (request: Request) => ({
+  id: isAuthorized(request) ? 1 : 0,
+  name: "管理员"
+});
 
 const getQueryNumber = (request: Request, key: string, fallback: number) => {
   const value = Number(new URL(request.url).searchParams.get(key));
@@ -222,6 +229,24 @@ export const handlers = [
     if (!isAuthorized(request)) return unauthorizedResponse();
     const scenic = scenicList.find((item) => item.id === Number(params.id)) ?? null;
     return HttpResponse.json(createApiResponse(scenic));
+  }),
+
+  http.get(apiPath("/manage/spot/list"), async ({ request }) => {
+    await delay(180);
+    if (!isAuthorized(request)) return unauthorizedResponse();
+    const scenicId = new URL(request.url).searchParams.get("scenicId");
+    const filtered = scenicId ? scenicSpots.filter((item) => item.scenicId === Number(scenicId)) : scenicSpots;
+    const { total, rows } = paginate(filtered, request);
+    return HttpResponse.json(createListResponse(rows, total));
+  }),
+
+  http.get(apiPath("/manage/route/list"), async ({ request }) => {
+    await delay(180);
+    if (!isAuthorized(request)) return unauthorizedResponse();
+    const scenicId = new URL(request.url).searchParams.get("scenicId");
+    const filtered = scenicId ? tourRoutes.filter((item) => item.scenicId === Number(scenicId)) : tourRoutes;
+    const { total, rows } = paginate(filtered, request);
+    return HttpResponse.json(createListResponse(rows, total));
   }),
 
   http.post(apiPath("/manage/scenic"), async ({ request }) => {
@@ -443,7 +468,11 @@ export const handlers = [
     await delay(240);
     if (!isAuthorized(request)) return unauthorizedResponse();
     const body = (await request.json()) as Partial<KnowledgeDoc>;
-    const item = normalizeKnowledgePayload(body);
+    const currentUser = getCurrentUser(request);
+    const item = normalizeKnowledgePayload({
+      ...body,
+      creatorName: currentUser.name
+    });
     knowledgeDocs.push(item);
     return HttpResponse.json(createApiResponse(null));
   }),
@@ -549,7 +578,12 @@ export const handlers = [
     await delay(240);
     if (!isAuthorized(request)) return unauthorizedResponse();
     const body = (await request.json()) as Partial<FaqItem>;
-    const item = normalizeFaqPayload(body);
+    const currentUser = getCurrentUser(request);
+    const item = normalizeFaqPayload({
+      ...body,
+      creator: currentUser.id,
+      updater: currentUser.id
+    });
     faqItems.push(item);
     return HttpResponse.json(createApiResponse(null));
   }),
@@ -561,7 +595,15 @@ export const handlers = [
     const item = faqItems.find((row) => row.id === Number(body.id));
 
     if (item) {
-      Object.assign(item, normalizeFaqPayload({ ...item, ...body, createTime: item.createTime }));
+      Object.assign(
+        item,
+        normalizeFaqPayload({
+          ...item,
+          ...body,
+          updater: getCurrentUser(request).id,
+          createTime: item.createTime
+        })
+      );
     }
 
     return HttpResponse.json(createApiResponse(null));

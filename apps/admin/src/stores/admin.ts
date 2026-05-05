@@ -16,11 +16,12 @@ export const useAdminStore = defineStore("admin", () => {
     isScenicLoading.value = true;
     try {
       const response = await adminApi.listScenic();
-      scenicList.value = response.rows;
+      const rows = Array.isArray(response.rows) ? response.rows : [];
+      scenicList.value = rows;
       const nextId =
-        preferredId && response.rows.some((item) => item.id === preferredId)
+        preferredId && rows.some((item) => item.id === preferredId)
           ? preferredId
-          : response.rows[0]?.id ?? null;
+          : rows[0]?.id ?? null;
       selectedScenicId.value = nextId;
     } finally {
       isScenicLoading.value = false;

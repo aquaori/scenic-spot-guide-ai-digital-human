@@ -11,7 +11,9 @@ import type {
   KnowledgeDoc,
   SatisfactionTrend,
   Scenic,
+  ScenicSpot,
   TodayOverview,
+  TourRoute,
   WeeklyStats
 } from "@/types/admin";
 
@@ -84,6 +86,12 @@ export const adminApi = {
   },
   getScenicDetail(id: number) {
     return http.getApi<Scenic>(`/manage/scenic/${id}`);
+  },
+  listSpots(scenicId?: number) {
+    return http.getList<ScenicSpot>("/manage/spot/list", { pageNum: 1, pageSize: 50, scenicId });
+  },
+  listRoutes(scenicId?: number) {
+    return http.getList<TourRoute>("/manage/route/list", { pageNum: 1, pageSize: 50, scenicId });
   },
   createScenic(payload: ScenicPayload) {
     return http.postApi<null>("/manage/scenic", payload);

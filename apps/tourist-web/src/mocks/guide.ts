@@ -36,6 +36,7 @@ export type ConversationMessage = {
   role: "user" | "assistant";
   content: string;
   attachments?: MessageAttachment[];
+  isStreaming?: boolean;
 };
 
 export const topFeaturesMock = ["路线推荐", "景点讲解"] as const;

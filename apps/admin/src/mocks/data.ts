@@ -9,7 +9,9 @@ import type {
   KnowledgeDoc,
   SatisfactionTrend,
   Scenic,
+  ScenicSpot,
   TodayOverview,
+  TourRoute,
   WeeklyStats
 } from "@/types/admin";
 
@@ -95,6 +97,66 @@ export const digitalHumans: DigitalHuman[] = [
     isDefault: 1,
     creator: 1,
     updater: 1,
+    createTime: "2026-04-02 09:00:00",
+    updateTime: "2026-04-05 14:00:00"
+  }
+];
+
+export const scenicSpots: ScenicSpot[] = [
+  {
+    id: 1,
+    scenicId: 1,
+    spotName: "迎客松",
+    spotDesc: "黄山最具代表性的景点之一，适合做首轮导览和拍照推荐。",
+    status: 1,
+    createTime: "2026-04-02 09:00:00",
+    updateTime: "2026-04-05 14:00:00"
+  },
+  {
+    id: 2,
+    scenicId: 1,
+    spotName: "光明顶",
+    spotDesc: "观日出和云海的高频推荐点位，适合路线规划场景。",
+    status: 1,
+    createTime: "2026-04-02 09:00:00",
+    updateTime: "2026-04-05 14:00:00"
+  },
+  {
+    id: 3,
+    scenicId: 2,
+    spotName: "月沼",
+    spotDesc: "宏村核心摄影点位，游客夜游和拍照问题会高频命中。",
+    status: 1,
+    createTime: "2026-04-02 09:00:00",
+    updateTime: "2026-04-05 14:00:00"
+  }
+];
+
+export const tourRoutes: TourRoute[] = [
+  {
+    id: 1,
+    scenicId: 1,
+    routeName: "黄山轻松看景线",
+    routeDesc: "覆盖主观景点位，优先减少折返和体力消耗。",
+    status: 1,
+    createTime: "2026-04-02 09:00:00",
+    updateTime: "2026-04-05 14:00:00"
+  },
+  {
+    id: 2,
+    scenicId: 1,
+    routeName: "黄山日出住宿线",
+    routeDesc: "围绕住宿与次日日出展开，适合两日游问答。",
+    status: 1,
+    createTime: "2026-04-02 09:00:00",
+    updateTime: "2026-04-05 14:00:00"
+  },
+  {
+    id: 3,
+    scenicId: 2,
+    routeName: "宏村夜游摄影线",
+    routeDesc: "串联南湖、月沼和巷道，适合夜游和拍照推荐。",
+    status: 1,
     createTime: "2026-04-02 09:00:00",
     updateTime: "2026-04-05 14:00:00"
   }

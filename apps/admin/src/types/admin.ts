@@ -46,6 +46,26 @@ export interface DigitalHuman {
   updateTime: string;
 }
 
+export interface ScenicSpot {
+  id: number;
+  scenicId: number;
+  spotName: string;
+  spotDesc: string;
+  status: 0 | 1;
+  createTime: string;
+  updateTime: string;
+}
+
+export interface TourRoute {
+  id: number;
+  scenicId: number;
+  routeName: string;
+  routeDesc: string;
+  status: 0 | 1;
+  createTime: string;
+  updateTime: string;
+}
+
 export interface FaqItem {
   id: number;
   scenicId: number;

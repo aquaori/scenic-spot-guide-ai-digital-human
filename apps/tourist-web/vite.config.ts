@@ -4,6 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
+  envDir: fileURLToPath(new URL("../..", import.meta.url)),
   publicDir: fileURLToPath(new URL("../../assets", import.meta.url)),
   plugins: [vue(), tailwindcss()],
   resolve: {
