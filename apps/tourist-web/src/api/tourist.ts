@@ -1,6 +1,19 @@
-import type { MessageAttachment } from "../mocks/guide";
 import { touristEnv } from "../config/env";
-import { endMockTouristChat, getMockTouristBootstrap, openMockTouristStream } from "../mocks/api";
+import { getVisitorId } from "../lib/visitor";
+import {
+  subscribeTouristStream,
+  type TouristStreamHandlers,
+  type TouristStreamSubscription
+} from "./tourist-stream";
+import {
+  endMockTouristChat,
+  getMockConversationDetail,
+  getMockConversationList,
+  getMockTouristBootstrap,
+  stopMockTouristChat,
+  submitMockTouristChat,
+  subscribeMockTouristStream
+} from "../mocks/api";
 
 type QueryValue = string | number | undefined;
 
@@ -15,12 +28,14 @@ export interface TouristDigitalHuman {
 
 export interface TouristBootstrapPayload {
   id?: number;
+  visitorId?: string | number;
 }
 
 export interface TouristBootstrapData {
   scenicId: number;
   scenicName: string;
   digitalHuman: TouristDigitalHuman | null;
+  onlineCount: number;
 }
 
 interface TouristBootstrapResponseData {
@@ -28,31 +43,63 @@ interface TouristBootstrapResponseData {
   scenicId?: number;
   scenicName?: string;
   digitalHuman?: TouristDigitalHuman | null;
+  onlineCount?: number;
 }
 
-export interface TouristStreamPayload {
+export interface TouristChatPayload {
   message: string;
   visitorId: string | number;
   sessionId?: string;
   scenicId?: string | number;
 }
 
-export type TouristStreamEvent =
-  | { event: "metadata"; sessionId?: string; intent?: string; attachments?: MessageAttachment[] }
-  | { event: "answer"; content: string }
-  | { event: "answer_fragment"; content: string }
-  | { event: "audio"; seq?: number; chunk: string; mimeType?: string; filename?: string }
-  | { event: "done"; totalCostMs?: number }
-  | { event: "error"; message: string };
-
-export interface TouristStreamHandlers {
-  onEvent: (event: TouristStreamEvent) => void;
+export interface TouristChatSubmitData {
+  conversationId: string;
+  sessionId: string;
 }
 
 export interface TouristChatEndPayload {
   sessionId: string;
   visitorId: string | number;
   scenicId?: string | number;
+}
+
+export interface TouristChatStopPayload {
+  conversationId: string;
+}
+
+export interface TouristConversationListPayload {
+  visitorId: string | number;
+  scenicId?: string | number;
+  page?: number;
+  size?: number;
+}
+
+export interface TouristConversationSummary {
+  sessionId: string;
+  title: string;
+  preview: string;
+  updatedAt: string;
+}
+
+export interface TouristConversationListData {
+  list: TouristConversationSummary[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface TouristConversationTurn {
+  role: "user" | "assistant";
+  content: string;
+  time?: string;
+}
+
+export interface TouristConversationDetail {
+  sessionId: string;
+  visitorId?: string | number;
+  scenicId?: string | number;
+  turns: TouristConversationTurn[];
 }
 
 const joinUrl = (baseUrl: string, path: string) => {
@@ -99,179 +146,65 @@ const normalizeBootstrapData = (
   return {
     scenicId: data.scenicId ?? data.id ?? fallbackId ?? 0,
     scenicName: data.scenicName ?? "",
-    digitalHuman: data.digitalHuman ?? null
+    digitalHuman: data.digitalHuman ?? null,
+    onlineCount: typeof data.onlineCount === "number" ? data.onlineCount : 0
   };
 };
 
-const decodeAttachmentRoutes = (attachment: Record<string, unknown>): MessageAttachment | null => {
-  const routes = Array.isArray(attachment.routes) ? attachment.routes : Array.isArray(attachment.items) ? attachment.items : null;
-
-  if (!routes) {
+const normalizeConversationSummary = (value: Record<string, unknown>): TouristConversationSummary | null => {
+  const rawSessionId = value.sessionId ?? value.id;
+  if (rawSessionId === undefined || rawSessionId === null) {
     return null;
   }
 
+  const title = value.title ?? value.summary ?? value.firstMessage ?? value.lastQuestion ?? "未命名会话";
+  const preview = value.preview ?? value.lastMessage ?? value.lastAnswer ?? value.content ?? "";
+  const updatedAt = value.updatedAt ?? value.updateTime ?? value.lastTime ?? value.createTime ?? value.createdAt ?? "";
+
   return {
-    id: String(attachment.id ?? `routes-${Date.now()}`),
-    type: "routes",
-    eyebrow: String(attachment.eyebrow ?? attachment.label ?? "Route Recommendation"),
-    title: String(attachment.title ?? attachment.name ?? "推荐路线"),
-    meta: String(attachment.meta ?? attachment.duration ?? ""),
-    items: routes
+    sessionId: String(rawSessionId),
+    title: String(title || "未命名会话"),
+    preview: String(preview || ""),
+    updatedAt: String(updatedAt || "")
+  };
+};
+
+const normalizeConversationListData = (data: unknown): TouristConversationListData => {
+  const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  const rawList = Array.isArray(record.list) ? record.list : [];
+  const list = rawList
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .map(normalizeConversationSummary)
+    .filter((item): item is TouristConversationSummary => item !== null);
+
+  return {
+    list,
+    total: typeof record.total === "number" ? record.total : list.length,
+    page: typeof record.page === "number" ? record.page : 1,
+    size: typeof record.size === "number" ? record.size : list.length
+  };
+};
+
+const normalizeConversationDetail = (data: unknown, fallbackSessionId: string): TouristConversationDetail => {
+  const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  const rawTurns = Array.isArray(record.turns) ? record.turns : [];
+
+  return {
+    sessionId: String(record.sessionId ?? fallbackSessionId),
+    visitorId: typeof record.visitorId === "string" || typeof record.visitorId === "number" ? record.visitorId : undefined,
+    scenicId: typeof record.scenicId === "string" || typeof record.scenicId === "number" ? record.scenicId : undefined,
+    turns: rawTurns
       .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
-      .map((item, index) => ({
-        id: String(item.id ?? `route-${index}`),
-        title: String(item.title ?? item.routeName ?? item.name ?? "未命名路线"),
-        summary: String(item.summary ?? item.description ?? item.routeDesc ?? ""),
-        duration: String(item.duration ?? item.estimatedDuration ?? ""),
-        tags: Array.isArray(item.tags) ? item.tags.map((tag) => String(tag)) : []
-      }))
+      .map((turn): TouristConversationTurn => {
+        const role: TouristConversationTurn["role"] = turn.role === "user" ? "user" : "assistant";
+        return {
+          role,
+          content: String(turn.content ?? turn.message ?? turn.text ?? ""),
+          time: typeof turn.time === "string" ? turn.time : undefined
+        };
+      })
+      .filter((turn) => turn.content.trim().length > 0)
   };
-};
-
-const decodeAttachmentSpot = (attachment: Record<string, unknown>): MessageAttachment => ({
-  id: String(attachment.id ?? `spot-${Date.now()}`),
-  type: "spot",
-  eyebrow: String(attachment.eyebrow ?? attachment.label ?? "Spot Explanation"),
-  title: String(attachment.title ?? attachment.spotName ?? attachment.name ?? "景点介绍"),
-  description: String(attachment.description ?? attachment.summary ?? attachment.spotDesc ?? ""),
-  metrics: Array.isArray(attachment.metrics)
-    ? attachment.metrics
-        .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
-        .map((item) => ({
-          label: String(item.label ?? item.name ?? "信息"),
-          value: String(item.value ?? item.content ?? "")
-        }))
-    : []
-});
-
-const decodeAttachments = (value: unknown): MessageAttachment[] => {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .map((attachment) => {
-      if (!attachment || typeof attachment !== "object") return null;
-      const record = attachment as Record<string, unknown>;
-      const type = String(record.type ?? "");
-
-      if (type === "routes" || Array.isArray(record.routes) || Array.isArray(record.items)) {
-        return decodeAttachmentRoutes(record);
-      }
-
-      if (type === "spot" || "spotName" in record || "metrics" in record) {
-        return decodeAttachmentSpot(record);
-      }
-
-      return null;
-    })
-    .filter((attachment): attachment is MessageAttachment => attachment !== null);
-};
-
-const parseStreamEvent = (eventType: string, payload: Record<string, unknown>): TouristStreamEvent | null => {
-
-  if (eventType === "metadata") {
-    return {
-      event: "metadata",
-      sessionId: typeof payload.sessionId === "string" ? payload.sessionId : undefined,
-      intent: typeof payload.intent === "string" ? payload.intent : undefined,
-      attachments: decodeAttachments(payload.attachments)
-    };
-  }
-
-  if (eventType === "answer" || eventType === "answer_fragment") {
-    return {
-      event: eventType,
-      content: String(payload.content ?? payload.delta ?? payload.text ?? "")
-    };
-  }
-
-  if (eventType === "audio") {
-    return {
-      event: "audio",
-      seq: typeof payload.seq === "number" ? payload.seq : undefined,
-      chunk: String(payload.chunk ?? ""),
-      mimeType: typeof payload.mimeType === "string" ? payload.mimeType : undefined,
-      filename: typeof payload.filename === "string" ? payload.filename : undefined
-    };
-  }
-
-  if (eventType === "done") {
-    return {
-      event: "done",
-      totalCostMs: typeof payload.totalCostMs === "number" ? payload.totalCostMs : undefined
-    };
-  }
-
-  if (eventType === "error") {
-    return {
-      event: "error",
-      message: String(payload.message ?? payload.error ?? "对话流返回异常")
-    };
-  }
-
-  return null;
-};
-
-const parseSseFrame = (frame: string) => {
-  const lines = frame.split("\n").map((line) => line.trim()).filter(Boolean);
-  const dataLines: string[] = [];
-  let eventType = "";
-
-  lines.forEach((line) => {
-    if (line.startsWith("event:")) {
-      eventType = line.slice(6).trim();
-      return;
-    }
-
-    if (line.startsWith("data:")) {
-      dataLines.push(line.slice(5).trim());
-    }
-  });
-
-  if (!eventType || dataLines.length === 0) {
-    return null;
-  }
-
-  return {
-    eventType,
-    raw: dataLines.join("\n")
-  };
-};
-
-const consumeSseStream = async (response: Response, handlers: TouristStreamHandlers) => {
-  const reader = response.body?.getReader();
-
-  if (!reader) {
-    throw new Error("SSE response body is empty");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    const frames = buffer.split(/\r?\n\r?\n/);
-    buffer = frames.pop() ?? "";
-
-    frames.forEach((frame) => {
-      const parsedFrame = parseSseFrame(frame);
-
-      if (!parsedFrame) return;
-
-      try {
-        const event = parseStreamEvent(
-          parsedFrame.eventType,
-          JSON.parse(parsedFrame.raw) as Record<string, unknown>
-        );
-        if (event) handlers.onEvent(event);
-      } catch (error) {
-        console.error("[tourist] Failed to parse stream event", error, parsedFrame.raw);
-      }
-    });
-  }
 };
 
 export const touristApi = {
@@ -280,10 +213,15 @@ export const touristApi = {
       return getMockTouristBootstrap(payload);
     }
 
+    const nextVisitorId = payload.visitorId ?? getVisitorId();
+
     const response = await requestJson<{ code: number; msg: string; data?: TouristBootstrapResponseData }>(
       "/tourist/bootstrap",
       { method: "GET" },
-      payload.id === undefined ? undefined : { scenicId: payload.id }
+      {
+        scenicId: payload.id,
+        visitorId: nextVisitorId
+      }
     );
 
     return {
@@ -291,29 +229,45 @@ export const touristApi = {
       data: normalizeBootstrapData(response.data, payload.id)
     };
   },
-  async openStream(payload: TouristStreamPayload, handlers: TouristStreamHandlers) {
+  async submitChat(payload: TouristChatPayload): Promise<{ code: number; msg: string; data: TouristChatSubmitData }> {
     if (touristEnv.enableMock) {
-      await openMockTouristStream(payload, handlers);
-      return;
+      return submitMockTouristChat(payload);
     }
 
-    try {
-      const response = await fetch(buildUrl("/tourist/stream"), {
+    const response = await requestJson<{ code: number; msg: string; data?: TouristChatSubmitData }>(
+      "/tourist/chat",
+      {
         method: "POST",
-        headers: {
-          Accept: "text/event-stream",
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`);
       }
+    );
 
-      await consumeSseStream(response, handlers);
-    } catch (error) {
-      throw error;
+    if (response.code !== 200) {
+      throw new Error(response.msg || "聊天会话初始化失败");
+    }
+
+    if (!response.data?.conversationId || !response.data.sessionId) {
+      throw new Error("聊天会话初始化失败");
+    }
+
+    return {
+      ...response,
+      data: response.data
+    };
+  },
+  subscribeStream(conversationId: string, handlers: TouristStreamHandlers): TouristStreamSubscription {
+    if (touristEnv.enableMock) {
+      return subscribeMockTouristStream(conversationId, handlers);
+    }
+
+    return subscribeTouristStream(
+      buildUrl(`/tourist/stream/${encodeURIComponent(conversationId)}`),
+      handlers
+    );
+  },
+  async stopChat(payload: TouristChatStopPayload) {
+    if (touristEnv.enableMock) {
+      await stopMockTouristChat(payload.conversationId);
     }
   },
   async endChat(payload: TouristChatEndPayload) {
@@ -322,19 +276,66 @@ export const touristApi = {
       return;
     }
 
+    const nextPayload = {
+      ...payload,
+      visitorId: payload.visitorId || getVisitorId()
+    };
+
     try {
       await requestJson<{ code: number; msg: string; data: null }>(
         "/tourist/chat/end",
         {
           method: "POST",
-          body: JSON.stringify(payload)
+          body: JSON.stringify(nextPayload)
         }
       );
     } catch (error) {
       throw error;
     }
   },
+  async getConversationList(payload: TouristConversationListPayload) {
+    if (touristEnv.enableMock) {
+      return getMockConversationList(payload);
+    }
+
+    const nextVisitorId = payload.visitorId || getVisitorId();
+
+    const response = await requestJson<{ code: number; msg: string; data?: unknown }>(
+      "/tourist/conversation/list",
+      { method: "GET" },
+      {
+        visitorId: nextVisitorId,
+        scenicId: payload.scenicId,
+        page: payload.page,
+        size: payload.size
+      }
+    );
+
+    return {
+      ...response,
+      data: normalizeConversationListData(response.data)
+    };
+  },
+  async getConversationDetail(sessionId: string, visitorId?: string | number) {
+    if (touristEnv.enableMock) {
+      return getMockConversationDetail(sessionId, visitorId);
+    }
+
+    const response = await requestJson<{ code: number; msg: string; data?: unknown }>(
+      `/tourist/conversation/${encodeURIComponent(sessionId)}`,
+      { method: "GET" },
+      { visitorId: visitorId ?? getVisitorId() }
+    );
+
+    return {
+      ...response,
+      data: normalizeConversationDetail(response.data, sessionId)
+    };
+  },
   getTtsUrl(filename: string) {
     return buildUrl(`/tourist/tts/${filename}`);
   }
 };
+
+export { getVisitorId } from "../lib/visitor";
+export type { TouristStreamEvent, TouristStreamHandlers, TouristStreamSubscription } from "./tourist-stream";

@@ -21,7 +21,8 @@ import type { DigitalHuman, FaqItem, KnowledgeDoc, Scenic } from "@/types/admin"
 const createApiResponse = <T>(data: T, msg = "操作成功") => ({ code: 200, msg, data });
 const createListResponse = <T>(rows: T[], total = rows.length, msg = "查询成功") => ({ total, rows, code: 200, msg });
 const parseScenicId = (value: string | null) => Number(value ?? scenicList[0]?.id ?? 1);
-const apiPath = (path: string) => `*${adminEnv.apiBaseUrl}${path}`;
+const apiPath = (path: string) => `*${adminEnv.apiBaseUrl || ""}${path}`;
+const apiFallbackPaths = ["/captchaImage", "/login", "/logout", "/manage/*"];
 const now = () => "2026-04-06 17:10:00";
 
 const mockToken = "mock-jwt-token-admin";
@@ -641,7 +642,7 @@ export const handlers = [
     return HttpResponse.json(createApiResponse(null));
   }),
 
-  http.all(apiPath("/*"), async ({ request }) => {
+  ...apiFallbackPaths.map((path) => http.all(apiPath(path), async ({ request }) => {
     return HttpResponse.json(
       {
         code: 404,
@@ -650,5 +651,5 @@ export const handlers = [
       },
       { status: 404 }
     );
-  })
+  }))
 ];

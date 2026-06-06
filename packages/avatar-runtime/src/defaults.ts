@@ -70,10 +70,10 @@ export const demoAvatarConfig: AvatarConfig = {
     },
   ],
   motions: [
-    { name: "idle", label: "待机", loop: true, clipUrl: "/avatar/xiaoA/motions/Idle.fbx" },
-    { name: "greeting", label: "欢迎", clipUrl: "/avatar/xiaoA/motions/Waving.fbx" },
-    { name: "answer", label: "讲解", clipUrl: "/avatar/xiaoA/motions/Talking.fbx" },
-    { name: "nod", label: "点头", clipUrl: "/avatar/xiaoA/motions/Nodding.fbx" },
+    { name: "idle", label: "待机", loop: true, clipUrl: "/avatar/xiaoA/motions/Idle.vrma", bodyMask: "fullBody" },
+    { name: "greeting", label: "欢迎", clipUrl: "/avatar/xiaoA/motions/Waving.vrma", bodyMask: "upperBody" },
+    { name: "answer", label: "讲解", clipUrl: "/avatar/xiaoA/motions/Talking.vrma", bodyMask: "upperBody" },
+    { name: "nod", label: "点头", clipUrl: "/avatar/xiaoA/motions/Nodding.fbx", bodyMask: "upperBody" },
   ],
   expressions: [
     { name: "neutral", label: "自然", preset: "neutral" },

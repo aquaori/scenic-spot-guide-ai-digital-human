@@ -22,6 +22,13 @@ let avatarHandle: AvatarRuntimeHandle | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let rafId: number | null = null;
 let lastFrameTime = 0;
+let followPointerActive = false;
+let pendingPointerEvent: PointerEvent | null = null;
+let pointerUpdateFrameId: number | null = null;
+let pointerResetTimer: number | null = null;
+
+const FOLLOW_EXIT_DELAY_MS = 120;
+const FOLLOW_BOUNDARY_HYSTERESIS_PX = 32;
 
 function cancelLoop() {
   if (rafId !== null) {
@@ -56,13 +63,104 @@ function bindResize() {
   resizeObserver.observe(hostRef.value);
 }
 
-function handlePointerMove(event: PointerEvent) {
-  if (!hostRef.value || !avatarHandle) return;
-  avatarHandle.updatePointer(event.clientX, event.clientY, hostRef.value.getBoundingClientRect());
+function clearPointerResetTimer() {
+  if (pointerResetTimer === null) return;
+  window.clearTimeout(pointerResetTimer);
+  pointerResetTimer = null;
+}
+
+function resetFollowPointer() {
+  followPointerActive = false;
+  pendingPointerEvent = null;
+  if (pointerUpdateFrameId !== null) {
+    cancelAnimationFrame(pointerUpdateFrameId);
+    pointerUpdateFrameId = null;
+  }
+  avatarHandle?.resetPointer();
 }
 
 function handlePointerLeave() {
-  avatarHandle?.resetPointer();
+  clearPointerResetTimer();
+  resetFollowPointer();
+}
+
+function applyWindowPointerMove(event: PointerEvent) {
+  if (!avatarHandle || !hostRef.value || typeof window === "undefined") return;
+
+  const followWidth = window.innerWidth * 0.5;
+  const enterBoundaryX = followWidth;
+  const exitBoundaryX = followWidth + FOLLOW_BOUNDARY_HYSTERESIS_PX;
+  const isInFollowArea =
+    event.clientX >= 0 &&
+    event.clientX <= (followPointerActive ? exitBoundaryX : enterBoundaryX) &&
+    event.clientY >= 0 &&
+    event.clientY <= window.innerHeight;
+
+  if (!isInFollowArea) {
+    if (pointerResetTimer === null) {
+      pointerResetTimer = window.setTimeout(() => {
+        pointerResetTimer = null;
+        resetFollowPointer();
+      }, FOLLOW_EXIT_DELAY_MS);
+    }
+    return;
+  }
+
+  clearPointerResetTimer();
+  followPointerActive = true;
+
+  const hostRect = hostRef.value.getBoundingClientRect();
+  const gazeCenterX = hostRect.left + hostRect.width * 0.5;
+  const gazeCenterY = hostRect.top + hostRect.height * 0.34;
+  const gazeRect = new DOMRect(
+    gazeCenterX - followWidth / 2,
+    gazeCenterY - window.innerHeight / 2,
+    followWidth,
+    window.innerHeight,
+  );
+
+  avatarHandle.updatePointer(
+    event.clientX,
+    event.clientY,
+    gazeRect,
+  );
+}
+
+function handleWindowPointerMove(event: PointerEvent) {
+  pendingPointerEvent = event;
+  if (pointerUpdateFrameId !== null) return;
+
+  pointerUpdateFrameId = requestAnimationFrame(() => {
+    pointerUpdateFrameId = null;
+    const nextEvent = pendingPointerEvent;
+    pendingPointerEvent = null;
+    if (nextEvent) {
+      applyWindowPointerMove(nextEvent);
+    }
+  });
+}
+
+function handleWindowPointerOut(event: PointerEvent) {
+  if (event.relatedTarget !== null) return;
+  clearPointerResetTimer();
+  resetFollowPointer();
+}
+
+function handleWindowBlur() {
+  clearPointerResetTimer();
+  resetFollowPointer();
+}
+
+async function playMotion(name: string) {
+  return avatarHandle?.playMotion(name) ?? false;
+}
+
+async function speak(audioUrl: string) {
+  return avatarHandle?.speak(audioUrl) ?? Promise.resolve();
+}
+
+function setSpeaking(speaking: boolean) {
+  avatarHandle?.setSpeaking(speaking);
 }
 
 async function initializeStage() {
@@ -97,14 +195,28 @@ watch(avatarConfig, (nextConfig) => {
 
 onMounted(() => {
   void initializeStage();
+  window.addEventListener("pointermove", handleWindowPointerMove);
+  window.addEventListener("pointerout", handleWindowPointerOut);
+  window.addEventListener("blur", handleWindowBlur);
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("pointermove", handleWindowPointerMove);
+  window.removeEventListener("pointerout", handleWindowPointerOut);
+  window.removeEventListener("blur", handleWindowBlur);
+  clearPointerResetTimer();
+  resetFollowPointer();
   cancelLoop();
   resizeObserver?.disconnect();
   resizeObserver = null;
   avatarHandle?.dispose();
   avatarHandle = null;
+});
+
+defineExpose({
+  playMotion,
+  speak,
+  setSpeaking,
 });
 </script>
 
@@ -112,7 +224,6 @@ onBeforeUnmount(() => {
   <div
     ref="hostRef"
     class="relative h-full w-full overflow-hidden"
-    @pointermove="handlePointerMove"
     @pointerleave="handlePointerLeave"
   >
     <canvas ref="canvasRef" class="absolute inset-0 h-full w-full"></canvas>

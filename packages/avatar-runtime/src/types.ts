@@ -28,6 +28,7 @@ export type AvatarMotionBinding = {
   label: string;
   clipUrl?: string;
   loop?: boolean;
+  bodyMask?: "fullBody" | "upperBody";
 };
 
 export type AvatarExpressionBinding = {
@@ -92,6 +93,7 @@ export type AvatarRuntimeHandle = {
   loadAvatar: (config: AvatarConfig) => Promise<void>;
   playMotion: (name: string) => Promise<boolean>;
   setExpression: (name: string, weight?: number) => void;
+  setSpeaking: (speaking: boolean) => void;
   speak: (audioUrl: string) => Promise<void>;
   getState: () => AvatarRuntimeState;
   dispose: () => void;

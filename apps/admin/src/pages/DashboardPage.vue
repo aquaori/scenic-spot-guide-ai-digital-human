@@ -27,6 +27,72 @@ const reportDate = "2026-04-06";
 const summarySkeletonCards = Array.from({ length: 4 }, (_, index) => index);
 const listSkeletonItems = Array.from({ length: 6 }, (_, index) => index);
 const compactSkeletonItems = Array.from({ length: 4 }, (_, index) => index);
+const intentTypeTextMap: Record<string, string> = {
+  complex_other: "复杂咨询",
+  spot_question: "景点问答",
+  route_plan: "路线规划",
+  rag_prematch: "知识预匹配"
+};
+
+const normalizeHotQuestionStats = (source: HotQuestionStats | null) => {
+  const items = source?.hotQuestions ?? [];
+
+  return items.map((item) => ({
+    question: item.question,
+    count: item.count ?? 0,
+    helpfulRate: item.helpfulRate
+  }));
+};
+
+const normalizeFocusPoints = (source: FocusPoints | null) => {
+  const items = ((source?.focusPoints ?? []) as Array<
+    FocusPoints["focusPoints"][number] & { intentType?: string }
+  >);
+  const totalCount = items.reduce((sum, item) => sum + (item.count ?? 0), 0);
+
+  return items.map((item) => {
+    const keyword = item.keyword || (item.intentType ? intentTypeTextMap[item.intentType] ?? item.intentType : "未命名话题");
+    const percentage = typeof item.percentage === "number" ? item.percentage : totalCount > 0 ? item.count / totalCount : undefined;
+
+    return {
+      keyword,
+      count: item.count ?? 0,
+      sentiment: item.sentiment ?? "neutral",
+      percentage
+    };
+  });
+};
+
+const normalizedHotQuestions = computed(() => normalizeHotQuestionStats(hotQuestions.value));
+const normalizedFocusPoints = computed(() => normalizeFocusPoints(focusPoints.value));
+
+const normalizeTodayOverview = (source: TodayOverview | ({ overview?: Partial<WeeklyStats["summary"]> } & Partial<TodayOverview>) | null) => {
+  if (!source) return null;
+
+  const sourceWithOverview = source as TodayOverview & { overview?: Partial<WeeklyStats["summary"]> };
+  const overviewSource = sourceWithOverview.overview;
+  const avgSatisfaction = typeof overviewSource?.avgSatisfaction === "number"
+    ? overviewSource.avgSatisfaction
+    : typeof source.satisfactionRate === "number"
+      ? source.satisfactionRate > 5
+        ? source.satisfactionRate / 20
+        : source.satisfactionRate
+      : 0;
+
+  return {
+    todayVisitors: source.todayVisitors ?? overviewSource?.uniqueVisitors ?? 0,
+    todayInteractions: source.todayInteractions ?? overviewSource?.totalInteractions ?? 0,
+    todayQuestions:
+      source.todayQuestions ??
+      ((overviewSource?.textCount ?? 0) + (overviewSource?.voiceCount ?? 0)),
+    satisfactionRate:
+      typeof source.satisfactionRate === "number"
+        ? source.satisfactionRate
+        : avgSatisfaction * 20,
+    peakHour: source.peakHour ?? "--",
+    activeGuides: source.activeGuides ?? 0
+  } satisfies TodayOverview;
+};
 
 const summaryCards = computed(() => {
   if (!overview.value || !weeklyStats.value) return [];
@@ -68,7 +134,7 @@ const loadDashboard = async (scenicId: number) => {
       adminApi.generateDailyReport(scenicId, reportDate)
     ]);
 
-    overview.value = overviewRes.data;
+    overview.value = normalizeTodayOverview(overviewRes.data);
     weeklyStats.value = weeklyRes.data;
     hotQuestions.value = hotRes.data;
     emotionTrend.value = emotionRes.data;
@@ -107,7 +173,7 @@ watch(
         <div>
           <p class="text-xs font-medium uppercase tracking-[0.28em] text-slate-400">Dashboard</p>
           <h1 class="mt-3 text-[30px] font-semibold tracking-tight text-slate-950">{{ selectedScenic?.scenicName ?? "景区数据看板" }}</h1>
-          <p class="mt-2 max-w-3xl text-sm leading-7 text-slate-500">
+          <p class="mt-2 text-sm leading-7 text-slate-500">
             页面已接到真实请求链路，开发环境通过 MSW 拦截 `/manage/*` 接口，后续只需要把 `VITE_API_BASE_URL` 切到真实网关即可。
           </p>
         </div>
@@ -295,7 +361,7 @@ watch(
         </div>
         <div v-else key="dashboard-hot-content" class="mt-5 space-y-3 min-[1800px]:grid min-[1800px]:grid-cols-2 min-[1800px]:gap-2.5 min-[1800px]:space-y-0">
           <article
-            v-for="item in hotQuestions?.hotQuestions ?? []"
+            v-for="item in normalizedHotQuestions"
             :key="item.question"
             class="rounded-[8px] border border-[color:var(--color-border)] bg-slate-50 px-4 py-3"
           >
@@ -339,7 +405,7 @@ watch(
         </div>
         <div v-else key="dashboard-focus-content" class="mt-5 space-y-3">
           <article
-            v-for="item in focusPoints?.focusPoints ?? []"
+            v-for="item in normalizedFocusPoints"
             :key="item.keyword"
             class="rounded-[8px] border border-[color:var(--color-border)] px-4 py-3"
           >

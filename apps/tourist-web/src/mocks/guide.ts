@@ -37,6 +37,7 @@ export type ConversationMessage = {
   content: string;
   attachments?: MessageAttachment[];
   isStreaming?: boolean;
+  audioPlaying?: boolean;
 };
 
 export const topFeaturesMock = ["路线推荐", "景点讲解"] as const;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from "vue";
+import { computed } from "vue";
 import { renderMarkdownToHtml } from "../../lib/markdown";
 
 const props = defineProps<{
@@ -7,47 +7,7 @@ const props = defineProps<{
   streaming?: boolean;
 }>();
 
-const renderedHtml = ref("");
-let renderTimer: ReturnType<typeof setTimeout> | null = null;
-
-const flushRender = () => {
-  if (renderTimer) {
-    clearTimeout(renderTimer);
-    renderTimer = null;
-  }
-
-  renderedHtml.value = renderMarkdownToHtml(props.content);
-};
-
-const scheduleRender = () => {
-  if (!props.streaming) {
-    flushRender();
-    return;
-  }
-
-  if (renderTimer) {
-    return;
-  }
-
-  renderTimer = window.setTimeout(() => {
-    renderTimer = null;
-    renderedHtml.value = renderMarkdownToHtml(props.content);
-  }, 60);
-};
-
-watch(
-  () => [props.content, props.streaming],
-  () => {
-    scheduleRender();
-  },
-  { immediate: true }
-);
-
-onBeforeUnmount(() => {
-  if (renderTimer) {
-    clearTimeout(renderTimer);
-  }
-});
+const renderedHtml = computed(() => renderMarkdownToHtml(props.content));
 </script>
 
 <template>

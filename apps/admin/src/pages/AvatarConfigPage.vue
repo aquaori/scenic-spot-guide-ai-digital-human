@@ -137,7 +137,7 @@ watch([selectedScenicId, () => route.params.id], loadProfile, { immediate: true 
         <div>
           <p class="text-xs font-medium uppercase tracking-[0.28em] text-slate-400">Avatar Config</p>
           <h2 class="mt-2 text-[28px] font-semibold tracking-tight text-slate-950">{{ isCreating ? "新建数字人模型" : "编辑数字人模型" }}</h2>
-          <p class="mt-2 max-w-3xl text-sm leading-7 text-slate-500">
+          <p class="mt-2 text-sm leading-7 text-slate-500">
             在这里维护当前模型的外观参数、语音参数和欢迎语。保存后会回到数字人展台页。
           </p>
         </div>

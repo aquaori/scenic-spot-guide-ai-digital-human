@@ -1,8 +1,13 @@
-export const formatNumber = (value: number) => new Intl.NumberFormat("zh-CN").format(value);
+const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 
-export const formatPercent = (value: number, digits = 1) => `${value.toFixed(digits)}%`;
+export const formatNumber = (value: number | undefined | null) =>
+  (isFiniteNumber(value) ? new Intl.NumberFormat("zh-CN").format(value) : "--");
 
-export const formatRate = (value: number, digits = 1) => `${(value * 100).toFixed(digits)}%`;
+export const formatPercent = (value: number | undefined | null, digits = 1) =>
+  (isFiniteNumber(value) ? `${value.toFixed(digits)}%` : "--");
+
+export const formatRate = (value: number | undefined | null, digits = 1) =>
+  (isFiniteNumber(value) ? `${(value * 100).toFixed(digits)}%` : "--");
 
 export const formatDateLabel = (value: string) =>
   new Intl.DateTimeFormat("zh-CN", {

@@ -8,3 +8,6 @@ coverage
 .codex/
 assets/
 .VSCodeCounter/
+AGENTS.md
+*.tsbuildinfo
+**/tsconfig.tsbuildinfo

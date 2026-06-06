@@ -287,11 +287,19 @@ watch(
         </label>
         <label class="space-y-2 md:col-span-2">
           <span class="text-[13px] font-medium tracking-[0.04em] text-slate-500">摘要说明</span>
-          <textarea v-model="docForm.docSummary" rows="3" class="w-full rounded-[8px] border border-[color:var(--color-border)] bg-white px-4 py-3 text-sm leading-7 outline-none transition focus:border-[#2563eb] focus:ring-4 focus:ring-[#2563eb]/10" />
+          <textarea
+            v-model="docForm.docSummary"
+            rows="3"
+            class="w-full rounded-[8px] border border-[color:var(--color-border)] bg-white px-4 py-3 text-sm leading-7 whitespace-pre-wrap break-words [overflow-wrap:anywhere] outline-none transition focus:border-[#2563eb] focus:ring-4 focus:ring-[#2563eb]/10"
+          />
         </label>
         <label class="space-y-2 md:col-span-2">
           <span class="text-[13px] font-medium tracking-[0.04em] text-slate-500">文档内容</span>
-          <textarea v-model="docForm.docContent" rows="14" class="w-full rounded-[8px] border border-[color:var(--color-border)] bg-white px-4 py-3 font-mono text-xs leading-6 outline-none transition focus:border-[#2563eb] focus:ring-4 focus:ring-[#2563eb]/10" />
+          <textarea
+            v-model="docForm.docContent"
+            rows="14"
+            class="w-full rounded-[8px] border border-[color:var(--color-border)] bg-white px-4 py-3 font-mono text-xs leading-6 whitespace-pre-wrap break-words [overflow-wrap:anywhere] outline-none transition focus:border-[#2563eb] focus:ring-4 focus:ring-[#2563eb]/10"
+          />
         </label>
       </div>
 
@@ -347,7 +355,7 @@ watch(
           <p class="text-xs font-medium tracking-[0.08em] text-slate-400">内容预览</p>
           <h4 class="mt-2 text-base font-semibold text-slate-900">{{ docForm.docTitle || "未命名文档" }}</h4>
           <p class="mt-3 text-sm leading-7 text-slate-600">{{ docForm.docSummary || "填写摘要后，这里会显示对文档价值的快速说明。" }}</p>
-          <pre class="mt-4 max-h-[380px] overflow-auto rounded-[8px] bg-[#f7faff] px-4 py-4 text-xs leading-6 text-slate-700">{{ docForm.docContent || "文档正文预览" }}</pre>
+          <pre class="mt-4 max-h-[380px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] bg-[#f7faff] px-4 py-4 text-xs leading-6 text-slate-700 [overflow-wrap:anywhere]">{{ docForm.docContent || "文档正文预览" }}</pre>
         </div>
       </div>
       </Transition>
