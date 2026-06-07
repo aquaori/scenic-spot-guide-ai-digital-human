@@ -15,7 +15,7 @@ export type TouristStreamEvent =
       serverTime?: number;
     }
   | { event: "done"; totalCostMs?: number }
-  | { event: "error"; message: string };
+  | { event: "error"; message: string; interrupted?: boolean };
 
 export interface TouristStreamHandlers {
   onEvent: (event: TouristStreamEvent) => void;
@@ -144,7 +144,8 @@ export const parseStreamEvent = (eventType: string, payload: Record<string, unkn
   if (eventType === "error") {
     return {
       event: "error",
-      message: String(payload.message ?? payload.error ?? "对话流返回异常")
+      message: String(payload.message ?? payload.error ?? "对话流返回异常"),
+      interrupted: payload.interrupted === true
     };
   }
 

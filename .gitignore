@@ -11,3 +11,4 @@ assets/
 AGENTS.md
 *.tsbuildinfo
 **/tsconfig.tsbuildinfo
+*.env

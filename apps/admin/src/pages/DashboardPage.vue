@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { adminApi } from "@/api/admin";
+import { adminEnv } from "@/config/env";
 import UiBadge from "@/components/ui/UiBadge.vue";
 import UiButton from "@/components/ui/UiButton.vue";
 import UiCard from "@/components/ui/UiCard.vue";
@@ -65,6 +66,7 @@ const normalizeFocusPoints = (source: FocusPoints | null) => {
 
 const normalizedHotQuestions = computed(() => normalizeHotQuestionStats(hotQuestions.value));
 const normalizedFocusPoints = computed(() => normalizeFocusPoints(focusPoints.value));
+const formatMultilineReportText = (value: string | null | undefined) => value?.replace(/\\n/g, "\n") ?? "";
 
 const normalizeTodayOverview = (source: TodayOverview | ({ overview?: Partial<WeeklyStats["summary"]> } & Partial<TodayOverview>) | null) => {
   if (!source) return null;
@@ -174,11 +176,11 @@ watch(
           <p class="text-xs font-medium uppercase tracking-[0.28em] text-slate-400">Dashboard</p>
           <h1 class="mt-3 text-[30px] font-semibold tracking-tight text-slate-950">{{ selectedScenic?.scenicName ?? "景区数据看板" }}</h1>
           <p class="mt-2 text-sm leading-7 text-slate-500">
-            页面已接到真实请求链路，开发环境通过 MSW 拦截 `/manage/*` 接口，后续只需要把 `VITE_API_BASE_URL` 切到真实网关即可。
+            以下是{{ selectedScenic?.scenicName ?? "景区" }}的运营概况、趋势分析和 AI 报告。
           </p>
         </div>
         <div class="flex items-center gap-3">
-          <UiBadge variant="info">MSW 已启用</UiBadge>
+          <UiBadge v-if="adminEnv.enableMsw" variant="info">MSW 已启用</UiBadge>
           <UiButton :disabled="generating || loading" @click="handleGenerateReport">
             {{ generating ? "生成中..." : "重新生成日报" }}
           </UiButton>
@@ -324,7 +326,7 @@ watch(
           </div>
           <div>
             <p class="text-sm font-medium text-slate-900">策略摘要</p>
-            <p class="mt-2 text-sm leading-7 text-slate-600">{{ latestReport.suggestionSummary }}</p>
+            <p class="mt-2 whitespace-pre-line text-sm leading-7 text-slate-600">{{ formatMultilineReportText(latestReport.suggestionSummary) }}</p>
           </div>
           <div>
             <p class="text-sm font-medium text-slate-900">服务建议</p>

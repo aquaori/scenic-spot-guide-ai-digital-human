@@ -38,6 +38,11 @@ export type ConversationMessage = {
   attachments?: MessageAttachment[];
   isStreaming?: boolean;
   audioPlaying?: boolean;
+  audioChunks?: string[];
+  audioMimeType?: string;
+  audioFilename?: string;
+  audioText?: string;
+  outputStopped?: boolean;
 };
 
 export const topFeaturesMock = ["路线推荐", "景点讲解"] as const;

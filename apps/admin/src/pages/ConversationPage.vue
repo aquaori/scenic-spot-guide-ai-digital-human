@@ -75,12 +75,46 @@ const fillFaqForm = (faq: FaqItem | null, scenicId: number) => {
   });
 };
 
+const loadHotFaqData = async (scenicId: number) => {
+  try {
+    const hotRes = await adminApi.getHotFaqs(scenicId);
+    if (selectedScenicId.value === scenicId) {
+      hotFaqs.value = Array.isArray(hotRes.data) ? hotRes.data : [];
+    }
+  } catch (error) {
+    console.error("[admin] Failed to load hot FAQ data", error);
+    if (selectedScenicId.value === scenicId) {
+      hotFaqs.value = [];
+    }
+  }
+};
+
+const loadFaqDetail = async (id: number, scenicId: number) => {
+  try {
+    const detail = await adminApi.getFaqDetail(id);
+    if (selectedScenicId.value === scenicId && activeFaqId.value === id) {
+      fillFaqForm(detail.data, scenicId);
+    }
+  } catch (error) {
+    console.error("[admin] Failed to load FAQ detail", error);
+    if (selectedScenicId.value === scenicId && activeFaqId.value === id) {
+      fillFaqForm(activeFaq.value, scenicId);
+    }
+  }
+};
+
+const getFaqKeywords = (value: string | null | undefined) => value?.split(",").filter(Boolean) ?? [];
+
 const loadFaqData = async (scenicId: number) => {
   loading.value = true;
+  hotFaqs.value = [];
+  void loadHotFaqData(scenicId);
+
   try {
-    const [faqRes, hotRes] = await Promise.all([adminApi.listFaqs(scenicId), adminApi.getHotFaqs(scenicId)]);
+    const faqRes = await adminApi.listFaqs(scenicId);
+    if (selectedScenicId.value !== scenicId) return;
+
     faqs.value = Array.isArray(faqRes.rows) ? faqRes.rows : [];
-    hotFaqs.value = Array.isArray(hotRes.data) ? hotRes.data : [];
 
     const nextId =
       activeFaqId.value && faqs.value.some((item) => item.id === activeFaqId.value)
@@ -90,21 +124,21 @@ const loadFaqData = async (scenicId: number) => {
     activeFaqId.value = nextId;
 
     if (nextId) {
-      const detail = await adminApi.getFaqDetail(nextId);
-      fillFaqForm(detail.data, scenicId);
+      void loadFaqDetail(nextId, scenicId);
     } else {
       fillFaqForm(null, scenicId);
     }
   } finally {
-    loading.value = false;
+    if (selectedScenicId.value === scenicId) {
+      loading.value = false;
+    }
   }
 };
 
 const selectFaq = async (id: number) => {
   if (!selectedScenicId.value) return;
   activeFaqId.value = id;
-  const detail = await adminApi.getFaqDetail(id);
-  fillFaqForm(detail.data, selectedScenicId.value);
+  await loadFaqDetail(id, selectedScenicId.value);
 };
 
 const createNewFaq = () => {
@@ -265,7 +299,7 @@ watch(
           </div>
 
           <div class="mt-4 flex flex-wrap gap-2">
-            <UiBadge v-for="keyword in item.questionKeywords.split(',').filter(Boolean)" :key="keyword" variant="secondary">
+            <UiBadge v-for="keyword in getFaqKeywords(item.questionKeywords)" :key="keyword" variant="secondary">
               {{ keyword }}
             </UiBadge>
           </div>

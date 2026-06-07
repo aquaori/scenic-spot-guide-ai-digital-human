@@ -95,6 +95,7 @@ export type AvatarRuntimeHandle = {
   setExpression: (name: string, weight?: number) => void;
   setSpeaking: (speaking: boolean) => void;
   speak: (audioUrl: string) => Promise<void>;
+  stopAudio: () => void;
   getState: () => AvatarRuntimeState;
   dispose: () => void;
 };

@@ -127,6 +127,19 @@ test("parseStreamEvent maps audio chunks", () => {
   });
 });
 
+test("parseStreamEvent marks interrupted stream errors", () => {
+  const event = parseStreamEvent("error", {
+    error: "interrupted",
+    interrupted: true
+  });
+
+  assert.deepEqual(event, {
+    event: "error",
+    message: "interrupted",
+    interrupted: true
+  });
+});
+
 test("subscribeTouristStream surfaces a closed connection error", () => {
   const fakeEventSource = new FakeEventSource();
   const events: Array<{ event: string; message?: string }> = [];

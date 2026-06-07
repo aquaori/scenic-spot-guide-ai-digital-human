@@ -4,6 +4,7 @@ import {
   type MessageAttachment
 } from "./guide";
 import type {
+  TouristAuthData,
   TouristChatPayload,
   TouristBootstrapData,
   TouristBootstrapPayload,
@@ -11,6 +12,8 @@ import type {
   TouristConversationDetail,
   TouristConversationListData,
   TouristConversationListPayload,
+  TouristLoginPayload,
+  TouristRegisterPayload,
   TouristStreamHandlers,
   TouristStreamSubscription
 } from "../api/tourist";
@@ -21,8 +24,18 @@ const getMockChunkDelay = () => 140 + Math.floor(Math.random() * 140);
 let mockConversationSequence = 0;
 
 type MockPendingConversation = {
+  conversationId: string;
   answer: ReturnType<typeof buildAnswer>;
   sessionId: string;
+  scenicId?: string | number;
+  visitorId?: string | number;
+  userMessage: string;
+  completed: boolean;
+};
+
+type MockActiveStream = {
+  close: () => void;
+  emitInterrupted: () => void;
 };
 
 const attachmentLibrary: Record<string, MessageAttachment[]> = {
@@ -69,6 +82,9 @@ const attachmentLibrary: Record<string, MessageAttachment[]> = {
 const bootstrapData: TouristBootstrapData = {
   scenicId: 1,
   scenicName: "黄山风景区",
+  scenic: {
+    scenicName: "黄山风景区"
+  },
   digitalHuman: {
     id: 1,
     scenicId: 1,
@@ -81,7 +97,7 @@ const bootstrapData: TouristBootstrapData = {
 };
 
 const pendingConversations = new Map<string, MockPendingConversation>();
-const mockStreamClosers = new Map<string, () => void>();
+const mockStreamClosers = new Map<string, MockActiveStream>();
 
 const buildAnswer = (message: string) => {
   if (/索道|营业|开门/.test(message)) {
@@ -142,6 +158,12 @@ const chunkText = (value: string) => {
   }
   return chunks;
 };
+const mockAudioChunks = [
+  "UklGRhQBAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YfAAAAAAACYKoRF6FPIRswqlAGv2te6L68HtwvS3/gIJ",
+  "8BBrFIgSxwvtAZP3b++l6zTttPNv/dYHLxBGFAsTzgw0A8P4OPDT67vss/Iq/KIGXQ8OFHoTyA14BPr5EvEW7FXswPHo+mcF",
+  "ew7BE9YTtQ63BTj7+/Ft7ATs2vCs+ScEiw1gEx4Ukw/wBnv88vLY7MbrBPB2+OMCjQzsElEUYRAiCMH99vNW7Z3rP+9I95sB",
+  "gwtkEnAUHhFMCQn/B/Xn7Yjriu4i9lIAbQrKEXsUyhFtClIAIvaK7ojr5+0H9Qn/TAkeEXAUZBKDC5sBSPc/753rVu0="
+];
 
 const mockConversationDetails: TouristConversationDetail[] = [
   {
@@ -190,6 +212,16 @@ const mockConversationDetails: TouristConversationDetail[] = [
   }
 ];
 
+const mockSessionDetails = new Map<string, TouristConversationDetail>(
+  mockConversationDetails.map((detail) => [
+    detail.sessionId,
+    {
+      ...detail,
+      turns: detail.turns.map((turn) => ({ ...turn }))
+    }
+  ])
+);
+
 const buildConversationSummary = (detail: TouristConversationDetail) => {
   const firstUserTurn = detail.turns.find((turn) => turn.role === "user");
   const lastTurn = detail.turns[detail.turns.length - 1];
@@ -211,8 +243,41 @@ export const getMockTouristBootstrap = async (payload: TouristBootstrapPayload =
     data: {
       ...bootstrapData,
       scenicId,
+      scenic: {
+        scenicName: bootstrapData.scenic.scenicName
+      },
       digitalHuman: bootstrapData.digitalHuman ? { ...bootstrapData.digitalHuman, scenicId } : null
     }
+  };
+};
+
+const buildMockAuthData = (userName: string, phonenumber?: string): TouristAuthData => ({
+  token: `mock-tourist-token-${userName}`,
+  userInfo: {
+    userId: 100,
+    userName,
+    nickName: userName,
+    ...(phonenumber ? { phonenumber } : {})
+  }
+});
+
+export const registerMockTourist = async (payload: TouristRegisterPayload) => {
+  await wait(80);
+
+  return {
+    code: 200,
+    msg: "操作成功",
+    data: buildMockAuthData(payload.userName, payload.phonenumber)
+  };
+};
+
+export const loginMockTourist = async (payload: TouristLoginPayload) => {
+  await wait(80);
+
+  return {
+    code: 200,
+    msg: "操作成功",
+    data: buildMockAuthData(payload.userName)
   };
 };
 
@@ -222,10 +287,33 @@ export const submitMockTouristChat = async (payload: TouristChatPayload) => {
   const conversationId = `mock-conversation-${Date.now()}-${mockConversationSequence}`;
   mockConversationSequence += 1;
   const sessionId = payload.sessionId ?? `mock-session-${Date.now()}`;
+  const scenicId = payload.scenicId ?? 1;
+  const visitorId = payload.visitorId ?? "mock-visitor";
+
+  const existingSession = mockSessionDetails.get(sessionId);
+  if (!existingSession) {
+    mockSessionDetails.set(sessionId, {
+      sessionId,
+      visitorId,
+      scenicId,
+      turns: []
+    });
+  }
+
+  mockSessionDetails.get(sessionId)?.turns.push({
+    role: "user",
+    content: payload.message,
+    time: new Date().toISOString()
+  });
 
   pendingConversations.set(conversationId, {
+    conversationId,
     answer: buildAnswer(payload.message),
-    sessionId
+    sessionId,
+    scenicId,
+    visitorId,
+    userMessage: payload.message,
+    completed: false
   });
 
   return {
@@ -243,6 +331,7 @@ export const subscribeMockTouristStream = (
   handlers: TouristStreamHandlers
 ): TouristStreamSubscription => {
   let closed = false;
+  let interrupted = false;
 
   const close = () => {
     if (closed) {
@@ -252,6 +341,19 @@ export const subscribeMockTouristStream = (
     closed = true;
     mockStreamClosers.delete(conversationId);
     pendingConversations.delete(conversationId);
+  };
+
+  const emitInterrupted = () => {
+    if (closed || interrupted) {
+      return;
+    }
+
+    interrupted = true;
+    handlers.onEvent({
+      event: "error",
+      message: "interrupted",
+      interrupted: true
+    });
   };
 
   const pendingConversation = pendingConversations.get(conversationId);
@@ -268,7 +370,10 @@ export const subscribeMockTouristStream = (
     return { close };
   }
 
-  mockStreamClosers.set(conversationId, close);
+  mockStreamClosers.set(conversationId, {
+    close,
+    emitInterrupted
+  });
 
   void (async () => {
     await wait(getMockThinkingDelay());
@@ -281,14 +386,15 @@ export const subscribeMockTouristStream = (
       attachments: pendingConversation.answer.attachments
     });
 
-    handlers.onEvent({
-      event: "audio",
-      seq: 1,
-      chunk: "",
-      mimeType: "text/speech",
-      text: pendingConversation.answer.content,
-      audioCostMs: 0,
-      serverTime: Date.now()
+    mockAudioChunks.forEach((chunk, index) => {
+      handlers.onEvent({
+        event: "audio",
+        seq: index + 1,
+        chunk,
+        mimeType: "audio/wav",
+        audioCostMs: 0,
+        serverTime: Date.now()
+      });
     });
 
     for (const chunk of chunkText(pendingConversation.answer.content)) {
@@ -302,6 +408,13 @@ export const subscribeMockTouristStream = (
 
     await wait(60);
     if (closed) return;
+    pendingConversation.completed = true;
+    const sessionDetail = mockSessionDetails.get(pendingConversation.sessionId);
+    sessionDetail?.turns.push({
+      role: "assistant",
+      content: pendingConversation.answer.content,
+      time: new Date().toISOString()
+    });
     handlers.onEvent({
       event: "done",
       totalCostMs: 420
@@ -313,15 +426,29 @@ export const subscribeMockTouristStream = (
   return { close };
 };
 
-export const stopMockTouristChat = async (conversationId: string) => {
+export const interruptMockTouristChat = async (sessionId: string) => {
   await wait(40);
-  mockStreamClosers.get(conversationId)?.();
-  mockStreamClosers.delete(conversationId);
-  pendingConversations.delete(conversationId);
+  for (const [conversationId, pendingConversation] of pendingConversations.entries()) {
+    if (pendingConversation.sessionId !== sessionId) {
+      continue;
+    }
+    mockStreamClosers.get(conversationId)?.emitInterrupted();
+    mockStreamClosers.get(conversationId)?.close();
+  }
 };
 
-export const endMockTouristChat = async (_payload: TouristChatEndPayload) => {
+export const endMockTouristChat = async (payload: TouristChatEndPayload) => {
   await wait(40);
+
+  const sessionDetail = mockSessionDetails.get(payload.sessionId);
+  if (!sessionDetail || sessionDetail.turns.length === 0) {
+    return;
+  }
+
+  sessionDetail.scenicId = payload.scenicId ?? sessionDetail.scenicId ?? 1;
+  if (payload.visitorId !== undefined) {
+    sessionDetail.visitorId = payload.visitorId;
+  }
 };
 
 export const getMockConversationList = async (payload: TouristConversationListPayload) => {
@@ -330,7 +457,18 @@ export const getMockConversationList = async (payload: TouristConversationListPa
   const page = payload.page ?? 1;
   const size = payload.size ?? 10;
   const start = (page - 1) * size;
-  const list = mockConversationDetails.map(buildConversationSummary);
+  const allList = Array.from(mockSessionDetails.values())
+    .filter((detail) => detail.turns.length > 0)
+    .filter((detail) => payload.scenicId === undefined || payload.scenicId === null || String(detail.scenicId) === String(payload.scenicId))
+    .map(buildConversationSummary)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const visitorScopedList = Array.from(mockSessionDetails.values())
+    .filter((detail) => detail.turns.length > 0)
+    .filter((detail) => String(detail.visitorId) === String(payload.visitorId))
+    .filter((detail) => payload.scenicId === undefined || payload.scenicId === null || String(detail.scenicId) === String(payload.scenicId))
+    .map(buildConversationSummary)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const list = visitorScopedList.length > 0 ? visitorScopedList : allList;
 
   return {
     code: 200,
@@ -344,15 +482,15 @@ export const getMockConversationList = async (payload: TouristConversationListPa
   };
 };
 
-export const getMockConversationDetail = async (sessionId: string, visitorId?: string | number) => {
+export const getMockConversationDetail = async (sessionId: string) => {
   await wait(120);
 
   return {
     code: 200,
     msg: "操作成功",
-    data: mockConversationDetails.find((item) => item.sessionId === sessionId) ?? {
+    data: mockSessionDetails.get(sessionId) ?? {
       sessionId,
-      visitorId: visitorId ?? "mock-visitor",
+      visitorId: "mock-visitor",
       scenicId: 1,
       turns: []
     }

@@ -92,7 +92,7 @@ watch(
           <p class="text-xs font-medium uppercase tracking-[0.28em] text-slate-400">Avatar Center</p>
           <h2 class="mt-2 text-[28px] font-semibold tracking-tight text-slate-950">数字人模型展台</h2>
           <p class="mt-2 text-sm leading-7 text-slate-500">
-            这里用于查看当前景区的模型效果、欢迎语和默认配置状态。进入二级页面后，再详细维护外观、语音和欢迎词等参数。
+            您可以管理和预览数字人模型的配置和效果。选择左侧的模型，右侧将展示该模型的欢迎语、服务气质以及外观和语音配置等信息。
           </p>
         </div>
         <div class="flex flex-wrap gap-2">

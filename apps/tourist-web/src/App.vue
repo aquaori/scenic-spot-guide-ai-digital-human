@@ -5,6 +5,8 @@ import StreamingMarkdown from "./components/chat/StreamingMarkdown.vue";
 import UiBadge from "./components/ui/UiBadge.vue";
 import UiCard from "./components/ui/UiCard.vue";
 import {
+  getTouristToken,
+  getTouristUserInfo,
   getVisitorId,
   touristApi,
   type TouristStreamEvent,
@@ -15,10 +17,25 @@ import {
   type ConversationMessage
 } from "./mocks/guide";
 import { getMockQuickPrompts } from "./mocks/api";
+import { decodeBase64AudioChunks } from "./lib/audio";
 
 type VoiceComposerMode = "text" | "press" | "recording";
 type RecordingDisposition = "send" | "cancel";
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+type TouristAuthMode = "login" | "register";
+type ActiveStreamStopOptions = {
+  manual?: boolean;
+};
+type StreamAudioEvent = Extract<TouristStreamEvent, { event: "audio" }>;
+type StreamAudioPlaybackEvent = StreamAudioEvent & {
+  chunks?: string[];
+};
+type PendingStreamAudio = {
+  chunks: Array<{ seq: number; chunk: string }>;
+  mimeType?: string;
+  filename?: string;
+  text?: string;
+};
 
 interface SpeechRecognitionResultLike {
   readonly isFinal: boolean;
@@ -70,7 +87,10 @@ const isSending = ref(false);
 const previousSessionId = getStoredSessionId();
 const sessionId = ref("");
 const visitorId = ref(getVisitorId());
+const authToken = ref(getTouristToken());
+const registeredUser = ref(getTouristUserInfo());
 const scenicId = ref<number>(1);
+const scenicName = ref("景区导览 AI 数字人");
 const digitalHuman = ref<TouristDigitalHuman | null>(null);
 const onlineCount = ref(0);
 const welcomeGreeting = ref(DEFAULT_WELCOME_GREETING);
@@ -89,6 +109,13 @@ const isHistoryLoading = ref(false);
 const isHistorySwitching = ref(false);
 const historyError = ref("");
 const activeHistorySessionId = ref("");
+const authDialogOpen = ref(false);
+const authMode = ref<TouristAuthMode>("login");
+const authUserName = ref("");
+const authPassword = ref("");
+const authPhoneNumber = ref("");
+const authError = ref("");
+const isAuthSubmitting = ref(false);
 const speechRecognition = ref<SpeechRecognitionLike | null>(null);
 const recognizedTranscript = ref("");
 const interimTranscript = ref("");
@@ -100,33 +127,42 @@ let pendingSpeechTranscriptPromise: Promise<string> | null = null;
 let voiceToastTimer: number | null = null;
 let activeStreamSubscription: { close: () => void } | null = null;
 let activeStreamConversationId: string | null = null;
-let activeStreamStopResolver: (() => void) | null = null;
+let activeStreamStopResolver: ((options?: ActiveStreamStopOptions) => void) | null = null;
+let activeSendRequestToken: symbol | null = null;
 let streamAudioPlaybackQueue: Promise<void> = Promise.resolve();
 let streamAudioPlaybackToken = 0;
 let activeAssistantAudioMessageId: string | null = null;
 let activeSpeechUtterance: SpeechSynthesisUtterance | null = null;
 let activeSpeechResolve: (() => void) | null = null;
 const activeAudioObjectUrls = new Set<string>();
+const pendingStreamAudioByMessageId = new Map<string, PendingStreamAudio>();
 const assistantTypingTargets = new Map<string, string>();
 const assistantTypingTimers = new Map<string, number>();
 const assistantTypingResolvers = new Map<string, () => void>();
 const ASSISTANT_TYPEWRITER_INTERVAL_MS = 24;
 const SPEECH_SYNTHESIS_STARTUP_DELAY_MS = 120;
 const SPEECH_SYNTHESIS_RATE = 1.45;
+const AUDIO_FALLBACK_TOAST_MESSAGE = "音频数据异常，将使用默认语音播放";
 
 const hasDraftMessage = computed(() => draftMessage.value.trim().length > 0);
+const isRegisteredTourist = computed(() => authToken.value.trim().length > 0);
+const isAudioPlaybackActive = ref(false);
+const primaryButtonShowsStop = computed(() => (isSending.value || isAudioPlaybackActive.value) && !hasDraftMessage.value);
 const shouldHighlightPrimaryButton = computed(() => hasDraftMessage.value || isSending.value || isPreparingFirstMessage.value);
 const composerView = computed<VoiceComposerMode>(() => (hasDraftMessage.value ? "text" : voiceMode.value));
 const quickPrompts = getMockQuickPrompts();
-const pageTitle = computed(() => digitalHuman.value?.humanName ?? "景区导览 AI 数字人");
+const pageTitle = computed(() => scenicName.value || "景区导览 AI 数字人");
 const hasUserMessages = computed(() => conversation.value.some((message) => message.role === "user"));
 const hasConversationStarted = computed(() => hasUserMessages.value || isSending.value);
-const showEmptyIntro = computed(() => !isComposerDocked.value && !isPreparingFirstMessage.value);
+const hasBootstrapError = computed(() => Boolean(bootstrapError.value));
+const showEmptyIntro = computed(() => !hasBootstrapError.value && !isComposerDocked.value && !isPreparingFirstMessage.value);
 const visibleQuickPrompts = computed(() => [] as string[]);
 const hasHistoryNextPage = computed(() => historyPage.value * historySize < historyTotal.value);
 const isAtBottom = ref(true);
 const showScrollToBottom = computed(() => !isAtBottom.value);
-const isSubmitBlocked = computed(() => isBootstrapLoading.value || Boolean(bootstrapError.value));
+const isSubmitBlocked = computed(() => isBootstrapLoading.value || hasBootstrapError.value);
+const currentUserLabel = computed(() => registeredUser.value?.nickName || registeredUser.value?.userName || "已登录游客");
+const authRegisterExpanded = computed(() => authMode.value === "register");
 
 function resolveWelcomeGreeting(greeting?: string | null) {
   const nextGreeting = greeting?.trim();
@@ -139,6 +175,78 @@ function showServerUnavailableDialog() {
 
 function closeServerUnavailableDialog() {
   serverUnavailableDialogOpen.value = false;
+}
+
+function syncTouristIdentityState() {
+  authToken.value = getTouristToken();
+  registeredUser.value = getTouristUserInfo();
+  visitorId.value = getVisitorId();
+}
+
+function openAuthDialog(mode: TouristAuthMode) {
+  authMode.value = mode;
+  authDialogOpen.value = true;
+  authError.value = "";
+  authPassword.value = "";
+}
+
+function closeAuthDialog() {
+  authDialogOpen.value = false;
+  authError.value = "";
+  authPassword.value = "";
+}
+
+function switchAuthMode(mode: TouristAuthMode) {
+  authMode.value = mode;
+  authError.value = "";
+}
+
+async function submitAuth() {
+  if (isAuthSubmitting.value) {
+    return;
+  }
+
+  const userName = authUserName.value.trim();
+  const password = authPassword.value.trim();
+  const phonenumber = authPhoneNumber.value.trim();
+
+  if (!userName || !password) {
+    authError.value = "请填写用户名和密码";
+    return;
+  }
+
+  if (authMode.value === "register" && !visitorId.value) {
+    authError.value = "当前缺少游客身份，请刷新后重试";
+    return;
+  }
+
+  isAuthSubmitting.value = true;
+  authError.value = "";
+
+  try {
+    if (authMode.value === "register") {
+      await touristApi.register({
+        visitorId: visitorId.value,
+        userName,
+        password,
+        ...(phonenumber ? { phonenumber } : {})
+      });
+    } else {
+      await touristApi.login({
+        userName,
+        password
+      });
+    }
+
+    syncTouristIdentityState();
+    closeAuthDialog();
+    void loadConversationHistories(1);
+  } catch (error) {
+    console.error("[tourist] 游客认证失败", error);
+    authError.value = error instanceof Error ? error.message : "游客认证失败";
+  } finally {
+    isAuthSubmitting.value = false;
+  }
 }
 
 const longPressTimer = ref<ReturnType<typeof setTimeout> | null>(null);
@@ -651,6 +759,13 @@ function updateAssistantMessage(id: string, patch: Partial<ConversationMessage>)
   maybeKeepMessagesPinnedToBottom();
 }
 
+function removeMessage(id: string) {
+  const targetIndex = conversation.value.findIndex((message) => message.id === id);
+  if (targetIndex < 0) return;
+  conversation.value.splice(targetIndex, 1);
+  maybeKeepMessagesPinnedToBottom();
+}
+
 async function copyAssistantMessage(content: string) {
   const text = content.trim();
   if (!text) return;
@@ -679,7 +794,8 @@ async function copyAssistantMessage(content: string) {
 
 async function replayAssistantMessageSpeech(message: ConversationMessage) {
   const text = message.content.trim();
-  if (!text || message.role !== "assistant") return;
+  const hasBackendAudio = Boolean(message.audioFilename || message.audioChunks?.length);
+  if (message.role !== "assistant" || (!text && !hasBackendAudio)) return;
 
   if (message.audioPlaying && activeAssistantAudioMessageId === message.id) {
     cancelStreamAudioPlayback();
@@ -691,7 +807,30 @@ async function replayAssistantMessageSpeech(message: ConversationMessage) {
   const token = streamAudioPlaybackToken;
   setAssistantAudioPlaying(message.id, true);
   try {
-    await speakTextWithBrowserSpeech(text, token);
+    if (message.audioFilename) {
+      try {
+        await avatarStageRef.value?.speak(touristApi.getTtsUrl(message.audioFilename));
+      } catch (error) {
+        console.warn("[tourist] 后端音频文件复播失败，回退默认语音", error);
+        showVoiceToast(AUDIO_FALLBACK_TOAST_MESSAGE);
+        await speakTextWithBrowserSpeech(text, token);
+      }
+    } else if (message.audioChunks?.length) {
+      try {
+        const played = await speakAudioChunksWithAvatar(message.audioChunks, message.audioMimeType, token);
+        if (!played) {
+          showVoiceToast(AUDIO_FALLBACK_TOAST_MESSAGE);
+          await speakTextWithBrowserSpeech(text, token);
+        }
+      } catch (error) {
+        console.warn("[tourist] 后端音频分片复播失败，回退默认语音", error);
+        showVoiceToast(AUDIO_FALLBACK_TOAST_MESSAGE);
+        await speakTextWithBrowserSpeech(text, token);
+      }
+    } else {
+      showVoiceToast(AUDIO_FALLBACK_TOAST_MESSAGE);
+      await speakTextWithBrowserSpeech(text, token);
+    }
   } catch (error) {
     console.warn("[tourist] 语音复播失败", error);
     showVoiceToast("当前无法播放语音");
@@ -722,13 +861,17 @@ function clearAllAssistantTyping() {
   Array.from(assistantTypingTimers.keys()).forEach(clearAssistantTyping);
 }
 
-function playAvatarMotion(name: string) {
-  void avatarStageRef.value?.playMotion(name);
-}
-
 function revokeStreamAudioUrls() {
   activeAudioObjectUrls.forEach((url) => URL.revokeObjectURL(url));
   activeAudioObjectUrls.clear();
+}
+
+function clearPendingStreamAudio(messageId?: string) {
+  if (messageId) {
+    pendingStreamAudioByMessageId.delete(messageId);
+    return;
+  }
+  pendingStreamAudioByMessageId.clear();
 }
 
 function cancelStreamAudioPlayback() {
@@ -739,9 +882,12 @@ function cancelStreamAudioPlayback() {
   if (activeAssistantAudioMessageId) {
     setAssistantAudioPlaying(activeAssistantAudioMessageId, false);
   }
+  isAudioPlaybackActive.value = false;
   avatarStageRef.value?.setSpeaking(false);
+  avatarStageRef.value?.stopAudio();
   window.speechSynthesis?.cancel();
   revokeStreamAudioUrls();
+  clearPendingStreamAudio();
   streamAudioPlaybackQueue = Promise.resolve();
 }
 
@@ -753,8 +899,10 @@ function setAssistantAudioPlaying(messageId: string, playing: boolean) {
       });
     }
     activeAssistantAudioMessageId = messageId;
+    isAudioPlaybackActive.value = true;
   } else if (activeAssistantAudioMessageId === messageId) {
     activeAssistantAudioMessageId = null;
+    isAudioPlaybackActive.value = false;
   }
 
   updateAssistantMessage(messageId, {
@@ -762,23 +910,122 @@ function setAssistantAudioPlaying(messageId: string, playing: boolean) {
   });
 }
 
-function decodeBase64AudioChunk(chunk: string, mimeType?: string) {
-  const rawChunk = chunk.startsWith("data:")
-    ? chunk.slice(chunk.indexOf(",") + 1)
-    : chunk;
-  const binary = window.atob(rawChunk);
-  const bytes = new Uint8Array(binary.length);
+function resolveAudioMimeType(mimeType?: string) {
+  const normalizedMimeType = mimeType?.trim().toLowerCase();
+  return normalizedMimeType === "audio/mp3" ? "audio/mpeg" : normalizedMimeType || "audio/mpeg";
+}
 
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  const blob = new Blob([bytes], {
-    type: mimeType || "audio/mpeg"
+function createBlobAudioUrl(audioParts: ArrayBuffer[], mimeType?: string) {
+  const blob = new Blob(audioParts, {
+    type: resolveAudioMimeType(mimeType)
   });
   const url = URL.createObjectURL(blob);
   activeAudioObjectUrls.add(url);
   return url;
+}
+
+async function speakAudioChunksWithAvatar(chunks: string[], mimeType: string | undefined, token: number) {
+  if (token !== streamAudioPlaybackToken) {
+    return false;
+  }
+
+  const audioParts = decodeBase64AudioChunks(chunks);
+  if (audioParts.length === 0) {
+    return false;
+  }
+
+  const audioUrl = createBlobAudioUrl(audioParts, mimeType);
+
+  try {
+    await avatarStageRef.value?.speak(audioUrl);
+    return true;
+  } finally {
+    if (activeAudioObjectUrls.has(audioUrl)) {
+      URL.revokeObjectURL(audioUrl);
+      activeAudioObjectUrls.delete(audioUrl);
+    }
+  }
+}
+
+function bufferStreamAudioEvent(event: StreamAudioEvent, messageId: string) {
+  const pending = pendingStreamAudioByMessageId.get(messageId) ?? {
+    chunks: []
+  };
+
+  if (event.mimeType) {
+    pending.mimeType = event.mimeType;
+  }
+  if (event.filename) {
+    pending.filename = event.filename;
+  }
+  if (event.text) {
+    pending.text = event.text;
+  }
+  if (event.chunk) {
+    pending.chunks.push({
+      seq: event.seq ?? pending.chunks.length + 1,
+      chunk: event.chunk
+    });
+  }
+
+  pendingStreamAudioByMessageId.set(messageId, pending);
+}
+
+function takePendingStreamAudioEvent(messageId: string): StreamAudioPlaybackEvent | null {
+  const pending = pendingStreamAudioByMessageId.get(messageId);
+  if (!pending) {
+    return null;
+  }
+
+  pendingStreamAudioByMessageId.delete(messageId);
+  const chunks = pending.chunks
+    .slice()
+    .sort((left, right) => left.seq - right.seq)
+    .map((item) => item.chunk);
+
+  if (!pending.filename && !pending.text && chunks.length === 0) {
+    return null;
+  }
+
+  return {
+    event: "audio",
+    chunk: chunks[0] ?? "",
+    chunks,
+    mimeType: pending.mimeType,
+    filename: pending.filename,
+    text: pending.text
+  };
+}
+
+function flushPendingStreamAudio(messageId: string) {
+  const event = takePendingStreamAudioEvent(messageId);
+  if (!event) {
+    return false;
+  }
+
+  updateAssistantMessage(messageId, {
+    audioChunks: event.chunks?.length ? [...event.chunks] : event.chunk ? [event.chunk] : undefined,
+    audioMimeType: event.mimeType,
+    audioFilename: event.filename,
+    audioText: event.text
+  });
+  enqueueStreamAudio(event, messageId);
+
+  return true;
+}
+
+function enqueueFallbackStreamAudio(messageId: string, text: string) {
+  const content = text.trim();
+  if (!content) {
+    return;
+  }
+
+  enqueueStreamAudio({
+    event: "audio",
+    chunk: "",
+    chunks: [],
+    text: content
+  }, messageId);
 }
 
 async function speakTextWithBrowserSpeech(text: string, token: number) {
@@ -830,7 +1077,7 @@ async function speakTextWithBrowserSpeech(text: string, token: number) {
   });
 }
 
-async function playStreamAudioEvent(event: Extract<TouristStreamEvent, { event: "audio" }>, token: number, messageId: string) {
+async function playStreamAudioEvent(event: StreamAudioPlaybackEvent, token: number, messageId: string) {
   if (token !== streamAudioPlaybackToken) {
     return;
   }
@@ -838,31 +1085,37 @@ async function playStreamAudioEvent(event: Extract<TouristStreamEvent, { event: 
   setAssistantAudioPlaying(messageId, true);
   try {
     if (event.filename) {
-      await avatarStageRef.value?.speak(touristApi.getTtsUrl(event.filename));
-      return;
-    }
-
-    if (event.chunk) {
-      const audioUrl = event.chunk.startsWith("data:")
-        ? event.chunk
-        : decodeBase64AudioChunk(event.chunk, event.mimeType);
-      await avatarStageRef.value?.speak(audioUrl);
-      if (activeAudioObjectUrls.has(audioUrl)) {
-        URL.revokeObjectURL(audioUrl);
-        activeAudioObjectUrls.delete(audioUrl);
+      try {
+        await avatarStageRef.value?.speak(touristApi.getTtsUrl(event.filename));
+        return;
+      } catch (error) {
+        console.warn("[tourist] 后端音频文件播放失败，回退默认语音", error);
       }
-      return;
     }
 
-    if (event.text) {
-      await speakTextWithBrowserSpeech(event.text, token);
+    const chunks = event.chunks?.length ? event.chunks : event.chunk ? [event.chunk] : [];
+    if (chunks.length > 0) {
+      try {
+        const played = await speakAudioChunksWithAvatar(chunks, event.mimeType, token);
+        if (played) {
+          return;
+        }
+      } catch (error) {
+        console.warn("[tourist] 后端音频分片播放失败，回退默认语音", error);
+      }
+    }
+
+    const fallbackText = event.text?.trim() || assistantTypingTargets.get(messageId)?.trim() || getMessageContent(messageId).trim();
+    if (fallbackText && token === streamAudioPlaybackToken) {
+      showVoiceToast(AUDIO_FALLBACK_TOAST_MESSAGE);
+      await speakTextWithBrowserSpeech(fallbackText, token);
     }
   } finally {
     setAssistantAudioPlaying(messageId, false);
   }
 }
 
-function enqueueStreamAudio(event: Extract<TouristStreamEvent, { event: "audio" }>, messageId: string) {
+function enqueueStreamAudio(event: StreamAudioPlaybackEvent, messageId: string) {
   const token = streamAudioPlaybackToken;
   streamAudioPlaybackQueue = streamAudioPlaybackQueue
     .then(() => playStreamAudioEvent(event, token, messageId))
@@ -872,19 +1125,27 @@ function enqueueStreamAudio(event: Extract<TouristStreamEvent, { event: "audio" 
     });
 }
 
-async function stopActiveResponse() {
-  if (!isSending.value && !isPreparingFirstMessage.value) {
+async function stopActiveResponse(options: ActiveStreamStopOptions = {}) {
+  if (!isSending.value && !isPreparingFirstMessage.value && !isAudioPlaybackActive.value) {
     return;
   }
 
-  const conversationId = activeStreamConversationId;
+  const activeSessionId = sessionId.value;
   activeStreamSubscription?.close();
   activeStreamSubscription = null;
-  activeStreamStopResolver?.();
+  if (activeStreamStopResolver) {
+    activeStreamStopResolver(options);
+  } else {
+    cancelStreamAudioPlayback();
+    if (activeSendRequestToken) {
+      activeSendRequestToken = null;
+    }
+    isSending.value = false;
+  }
 
-  if (conversationId) {
+  if (activeSessionId) {
     try {
-      await touristApi.stopChat({ conversationId });
+      await touristApi.interruptChat({ sessionId: activeSessionId });
     } catch (error) {
       console.warn("[tourist] 停止输出失败，已关闭本地流", error);
     }
@@ -991,7 +1252,7 @@ async function openConversationHistory(targetSessionId: string) {
   const loadingStartedAt = performance.now();
 
   try {
-    const response = await touristApi.getConversationDetail(targetSessionId, visitorId.value);
+    const response = await touristApi.getConversationDetail(targetSessionId);
     const elapsed = performance.now() - loadingStartedAt;
     if (elapsed < 260) {
       await wait(260 - elapsed);
@@ -1059,7 +1320,11 @@ async function sendMessage(rawMessage: string) {
 
   const content = rawMessage.trim();
   if (!content) return;
-  if (isSending.value || isPreparingFirstMessage.value) return;
+  if (isPreparingFirstMessage.value) return;
+
+  if (isSending.value) {
+    await stopActiveResponse();
+  }
 
   const isFirstMessage = !isComposerDocked.value && !hasConversationStarted.value;
   if (isFirstMessage) {
@@ -1085,6 +1350,8 @@ async function sendMessage(rawMessage: string) {
 
   draftMessage.value = "";
   voiceMode.value = "text";
+  const sendRequestToken = Symbol("tourist-send");
+  activeSendRequestToken = sendRequestToken;
   isSending.value = true;
   isPreparingFirstMessage.value = false;
   cancelStreamAudioPlayback();
@@ -1092,6 +1359,7 @@ async function sendMessage(rawMessage: string) {
   let nextContent = "";
   let streamFailed = false;
   let streamStopped = false;
+  let submittedConversationId: string | null = null;
 
   try {
     const response = await touristApi.submitChat({
@@ -1104,6 +1372,7 @@ async function sendMessage(rawMessage: string) {
     sessionId.value = response.data.sessionId;
     activeHistorySessionId.value = response.data.sessionId;
     activeStreamConversationId = response.data.conversationId;
+    submittedConversationId = response.data.conversationId;
 
     await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -1124,15 +1393,27 @@ async function sendMessage(rawMessage: string) {
       };
 
       try {
-        activeStreamStopResolver = () => {
+        activeStreamStopResolver = (stopOptions = {}) => {
           streamStopped = true;
           cancelStreamAudioPlayback();
+          clearPendingStreamAudio(assistantMessageId);
           pendingAssistantMessageId.value = null;
           clearAssistantTyping(assistantMessageId);
-          updateAssistantMessage(assistantMessageId, {
-            content: nextContent || "已停止输出",
-            isStreaming: false
-          });
+          if (nextContent) {
+            updateAssistantMessage(assistantMessageId, {
+              content: nextContent,
+              isStreaming: false,
+              outputStopped: true
+            });
+          } else if (stopOptions.manual) {
+            updateAssistantMessage(assistantMessageId, {
+              content: "已停止输出",
+              isStreaming: false,
+              outputStopped: false
+            });
+          } else {
+            removeMessage(assistantMessageId);
+          }
           settle();
         };
 
@@ -1157,41 +1438,70 @@ async function sendMessage(rawMessage: string) {
             }
 
             if (event.event === "audio") {
-              enqueueStreamAudio(event, assistantMessageId);
+              bufferStreamAudioEvent(event, assistantMessageId);
               return;
             }
 
             if (event.event === "done") {
+              const hasStreamAudio = flushPendingStreamAudio(assistantMessageId);
+              if (!hasStreamAudio) {
+                enqueueFallbackStreamAudio(assistantMessageId, nextContent);
+              }
               settle();
               return;
             }
 
             if (event.event === "error") {
+              if (event.interrupted) {
+                streamStopped = true;
+                clearPendingStreamAudio(assistantMessageId);
+                pendingAssistantMessageId.value = null;
+                clearAssistantTyping(assistantMessageId);
+                if (nextContent) {
+                  updateAssistantMessage(assistantMessageId, {
+                    content: nextContent,
+                    isStreaming: false,
+                    outputStopped: true
+                  });
+                } else {
+                  removeMessage(assistantMessageId);
+                }
+                settle();
+                return;
+              }
+
               streamFailed = true;
+              clearPendingStreamAudio(assistantMessageId);
               pendingAssistantMessageId.value = null;
               clearAssistantTyping(assistantMessageId);
               updateAssistantMessage(assistantMessageId, {
                 content: event.message || "当前暂时无法完成回答，请稍后重试。",
-                isStreaming: false
+                isStreaming: false,
+                outputStopped: false
               });
               settle();
             }
           }
-        });
+        }, response.data.sessionId);
       } catch (error) {
         reject(error);
       }
     });
   } catch (error) {
     streamFailed = true;
+    clearPendingStreamAudio(assistantMessageId);
     console.error("[tourist] 发送消息失败", error);
     pendingAssistantMessageId.value = null;
     clearAssistantTyping(assistantMessageId);
     updateAssistantMessage(assistantMessageId, {
       content: error instanceof Error ? error.message : "当前暂时无法完成回答，请稍后重试。",
-      isStreaming: false
+      isStreaming: false,
+      outputStopped: false
     });
   } finally {
+    if (streamFailed || streamStopped) {
+      clearPendingStreamAudio(assistantMessageId);
+    }
     if (nextContent && !streamFailed && !streamStopped) {
       await waitForAssistantTyping(assistantMessageId);
     }
@@ -1208,14 +1518,18 @@ async function sendMessage(rawMessage: string) {
     if (!nextContent && !streamFailed && !streamStopped) {
       updateAssistantMessage(assistantMessageId, {
         content: "当前没有收到有效回复，请稍后再试。",
-        isStreaming: false
+        isStreaming: false,
+        outputStopped: false
       });
     }
-    isSending.value = false;
-    if (activeStreamConversationId) {
-      activeStreamConversationId = null;
+    if (activeSendRequestToken === sendRequestToken) {
+      activeSendRequestToken = null;
+      isSending.value = false;
+      if (activeStreamConversationId === submittedConversationId) {
+        activeStreamConversationId = null;
+      }
+      activeStreamStopResolver = null;
     }
-    activeStreamStopResolver = null;
   }
 }
 
@@ -1244,9 +1558,9 @@ function handlePrimaryButtonPointerDown(event: PointerEvent) {
     return;
   }
 
-  if (isSending.value) {
+  if (primaryButtonShowsStop.value) {
     event.preventDefault();
-    void stopActiveResponse();
+    void stopActiveResponse({ manual: true });
     return;
   }
 
@@ -1273,7 +1587,7 @@ function handlePrimaryButtonPointerUp() {
     return;
   }
 
-  if (isSending.value || isPreparingFirstMessage.value) {
+  if (primaryButtonShowsStop.value || isPreparingFirstMessage.value) {
     return;
   }
 
@@ -1338,6 +1652,7 @@ function restoreTextComposer() {
 
 onMounted(async () => {
   sendActionIconPath.value = buildSendActionIconPath(isSending.value ? 1 : 0);
+  syncTouristIdentityState();
 
   if (previousSessionId) {
     try {
@@ -1356,6 +1671,7 @@ onMounted(async () => {
   try {
     const bootstrap = await touristApi.getBootstrap({ id: scenicId.value });
     scenicId.value = bootstrap.data.scenicId;
+    scenicName.value = (bootstrap.data.scenic.scenicName ?? "景区导览") + " AI 数字人";
     digitalHuman.value = bootstrap.data.digitalHuman;
     onlineCount.value = bootstrap.data.onlineCount;
     welcomeGreeting.value = resolveWelcomeGreeting(bootstrap.data.digitalHuman?.defaultGreeting);
@@ -1483,7 +1799,7 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 class="group inline-flex h-9 w-9 cursor-pointer items-center overflow-hidden rounded-full bg-white pl-2.5 pr-2 text-slate-600 transition-[width,background-color,color] duration-220 hover:w-[108px] hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                :disabled="isSending || isPreparingFirstMessage"
+                :disabled="isSending || isPreparingFirstMessage || hasBootstrapError"
                 aria-label="开启新对话"
                 @click="startNewConversation"
               >
@@ -1497,8 +1813,9 @@ onBeforeUnmount(() => {
               </button>
               <button
                 type="button"
-                class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                 :class="historyPanelOpen ? 'bg-slate-100 text-slate-900' : 'bg-white'"
+                :disabled="hasBootstrapError"
                 aria-label="会话历史"
                 @click="toggleHistoryPanel"
               >
@@ -1511,6 +1828,34 @@ onBeforeUnmount(() => {
                   <path d="M4 18h.01" />
                 </svg>
               </button>
+              <button
+                v-if="!isRegisteredTourist"
+                type="button"
+                class="inline-flex h-9 cursor-pointer items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+                aria-label="游客注册或登录"
+                @click="openAuthDialog('login')"
+              >
+                <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                  <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+                    <path d="M5 20a7 7 0 0 1 14 0" />
+                  </svg>
+                </span>
+                <span>注册 / 登录</span>
+              </button>
+              <div
+                v-else
+                class="inline-flex h-9 max-w-[132px] items-center gap-2 rounded-full border border-slate-200 bg-white pl-2 pr-3 text-xs font-medium text-slate-700"
+                aria-label="已登录游客"
+              >
+                <span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
+                  <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+                    <path d="M5 20a7 7 0 0 1 14 0" />
+                  </svg>
+                </span>
+                <span class="min-w-0 truncate text-left leading-4">{{ currentUserLabel }}</span>
+              </div>
             </div>
           </div>
         </header>
@@ -1524,15 +1869,18 @@ onBeforeUnmount(() => {
           >
             <div
               class="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 pt-3 transition-opacity duration-300 sm:px-5 lg:max-w-[56rem] xl:max-w-[60rem] xl:gap-6 xl:pt-4 2xl:max-w-6xl 2xl:px-6"
-              :class="hasConversationStarted || bootstrapError ? 'pb-56 xl:pb-60' : 'pb-8 opacity-0'"
+              :class="hasBootstrapError ? 'pb-8' : hasConversationStarted ? 'pb-56 xl:pb-60' : 'pb-8 opacity-0'"
             >
             <div
-              v-if="bootstrapError"
-              class="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm leading-7 text-rose-600"
+              v-if="hasBootstrapError"
+              class="flex min-h-[calc(100vh-160px)] items-center justify-center"
             >
-              接口初始化失败：{{ bootstrapError }}
+              <div class="w-full max-w-2xl rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-center text-sm leading-7 text-rose-600">
+                接口初始化失败，请稍后刷新重试。
+              </div>
             </div>
 
+            <template v-else>
             <div
               v-for="message in conversation"
               :key="message.id"
@@ -1561,6 +1909,13 @@ onBeforeUnmount(() => {
                 <div v-else class="whitespace-pre-line break-words [overflow-wrap:anywhere] text-[15px] leading-8 text-slate-700">
                   {{ message.content }}
                 </div>
+
+                <p
+                  v-if="message.role === 'assistant' && message.outputStopped"
+                  class="mt-2 text-xs font-medium text-slate-400"
+                >
+                  已停止输出
+                </p>
               </div>
 
               <div
@@ -1678,13 +2033,14 @@ onBeforeUnmount(() => {
                     :key="prompt"
                     type="button"
                     class="w-fit max-w-full cursor-pointer rounded-[18px] bg-[#f1f3f5] px-4 py-3 text-left text-[15px] font-medium leading-6 text-slate-700 transition duration-200 hover:-translate-y-0.5 hover:bg-[#eceff2]"
-                  :disabled="isSending || isSubmitBlocked"
+                  :disabled="isPreparingFirstMessage || isSubmitBlocked"
                   @click="sendMessage(prompt)"
                 >
                   {{ prompt }}
                   </button>
                 </div>
               </div>
+            </template>
             </div>
           </div>
 
@@ -1713,6 +2069,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div
+          v-if="!hasBootstrapError"
           class="pointer-events-none absolute inset-x-0 px-4 transition-[bottom,transform,padding] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] sm:px-5"
           :class="isComposerDocked
             ? 'bottom-0 translate-y-0 pb-4 pt-8'
@@ -1810,7 +2167,7 @@ onBeforeUnmount(() => {
                       ? 'bg-black text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)] hover:bg-slate-800'
                       : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700'"
                     :disabled="isPreparingFirstMessage || isSubmitBlocked"
-                    :aria-label="isSending || isPreparingFirstMessage ? '停止输出' : hasDraftMessage ? '发送消息' : '语音输入'"
+                    :aria-label="primaryButtonShowsStop ? '停止输出' : hasDraftMessage ? '发送消息' : '语音输入'"
                     @pointerdown="handlePrimaryButtonPointerDown"
                     @pointerup="handlePrimaryButtonPointerUp"
                     @pointerleave="handlePrimaryButtonPointerLeave"
@@ -1836,14 +2193,14 @@ onBeforeUnmount(() => {
                         fill="none"
                         aria-hidden="true"
                         class="absolute inset-0 h-5 w-5 transition-all duration-250 ease-out"
-                        :class="isSending
+                        :class="primaryButtonShowsStop
                           ? 'translate-y-0 opacity-100 scale-200'
                           : hasDraftMessage
                             ? 'translate-y-0 opacity-100 scale-100'
                             : 'translate-y-[140%] opacity-0 scale-90'"
                       >
                         <path
-                          v-if="isSending"
+                          v-if="primaryButtonShowsStop"
                           d="M8 8h8v8H8Z"
                           fill="currentColor"
                         />
@@ -1964,7 +2321,7 @@ onBeforeUnmount(() => {
                   :key="prompt"
                   type="button"
                   class="max-w-full cursor-pointer rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium leading-5 text-slate-600 shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:text-slate-900 hover:shadow-[0_16px_34px_rgba(15,23,42,0.08)] disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="isSending || isPreparingFirstMessage || isSubmitBlocked"
+                  :disabled="isPreparingFirstMessage || isSubmitBlocked"
                   @click="sendMessage(prompt)"
                 >
                   {{ prompt }}
@@ -2060,6 +2417,135 @@ onBeforeUnmount(() => {
       >
         <div class="rounded-full bg-slate-900/92 px-4 py-2 text-sm font-medium text-white shadow-[0_16px_40px_rgba(15,23,42,0.16)]">
           {{ voiceToastMessage }}
+        </div>
+      </div>
+    </Transition>
+
+    <Transition
+      enter-active-class="transition duration-220 ease-out"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition duration-180 ease-in"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="authDialogOpen"
+        class="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/18 px-4 backdrop-blur-[2px]"
+        @click.self="closeAuthDialog"
+      >
+        <div class="w-full max-w-md rounded-[24px] border border-[#0000000d] bg-white px-6 py-5 shadow-[0_28px_70px_rgba(15,23,42,0.16)]">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Tourist Auth</p>
+              <h3 class="mt-1 text-lg font-semibold text-slate-900">
+                {{ authMode === 'login' ? '游客登录' : '游客注册' }}
+              </h3>
+              <p class="mt-1 text-sm leading-6 text-slate-500">
+                {{ authMode === 'login' ? '使用已有账号登录' : '创建新的游客账号' }}
+              </p>
+            </div>
+            <button
+              type="button"
+              class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              aria-label="关闭认证弹窗"
+              @click="closeAuthDialog"
+            >
+              <svg viewBox="0 0 24 24" class="h-4.5 w-4.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="m6 6 12 12" />
+                <path d="M18 6 6 18" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="mt-5 inline-flex rounded-full bg-slate-100 p-1">
+            <button
+              type="button"
+              class="inline-flex h-9 cursor-pointer items-center justify-center rounded-full px-4 text-sm font-medium transition"
+              :class="authMode === 'login' ? 'bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.06)]' : 'text-slate-500'"
+              @click="switchAuthMode('login')"
+            >
+              登录
+            </button>
+            <button
+              type="button"
+              class="inline-flex h-9 cursor-pointer items-center justify-center rounded-full px-4 text-sm font-medium transition"
+              :class="authMode === 'register' ? 'bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.06)]' : 'text-slate-500'"
+              @click="switchAuthMode('register')"
+            >
+              注册
+            </button>
+          </div>
+
+          <form class="mt-5 space-y-4" @submit.prevent="submitAuth">
+
+            <label class="block">
+              <span class="mb-2 block text-sm font-medium text-slate-700">用户名</span>
+              <input
+                v-model="authUserName"
+                type="text"
+                autocomplete="username"
+                class="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-900/5"
+                placeholder="请输入用户名"
+              />
+            </label>
+
+            <label class="block">
+              <span class="mb-2 block text-sm font-medium text-slate-700">密码</span>
+              <input
+                v-model="authPassword"
+                type="password"
+                :autocomplete="authMode === 'login' ? 'current-password' : 'new-password'"
+                class="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-900/5"
+                placeholder="请输入密码"
+              />
+            </label>
+
+            <Transition
+              enter-active-class="overflow-hidden transition-[max-height,opacity,margin,transform] duration-260 ease-out"
+              enter-from-class="mt-0 max-h-0 -translate-y-1 opacity-0"
+              enter-to-class="mt-0 max-h-60 translate-y-0 opacity-100"
+              leave-active-class="overflow-hidden transition-[max-height,opacity,margin,transform] duration-200 ease-in"
+              leave-from-class="mt-0 max-h-60 translate-y-0 opacity-100"
+              leave-to-class="mt-0 max-h-0 -translate-y-1 opacity-0"
+            >
+              <div v-if="authRegisterExpanded" class="space-y-4 overflow-hidden">
+
+                <label class="block">
+                  <span class="mb-2 block text-sm font-medium text-slate-700">手机号</span>
+                  <input
+                    v-model="authPhoneNumber"
+                    type="tel"
+                    autocomplete="tel"
+                    class="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-900/5"
+                    placeholder="选填"
+                  />
+                </label>
+              </div>
+            </Transition>
+
+            <div v-if="authError" class="rounded-2xl bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-600">
+              {{ authError }}
+            </div>
+
+            <div class="flex items-center justify-end gap-3 pt-1">
+              <button
+                type="button"
+                class="inline-flex h-10 cursor-pointer items-center justify-center rounded-full px-4 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                :disabled="isAuthSubmitting"
+                @click="closeAuthDialog"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                class="inline-flex h-10 cursor-pointer items-center justify-center rounded-full bg-slate-900 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="isAuthSubmitting"
+              >
+                {{ isAuthSubmitting ? '提交中' : authMode === 'login' ? '登录' : '注册' }}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </Transition>

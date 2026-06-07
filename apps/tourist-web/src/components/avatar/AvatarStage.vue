@@ -159,6 +159,10 @@ async function speak(audioUrl: string) {
   return avatarHandle?.speak(audioUrl) ?? Promise.resolve();
 }
 
+function stopAudio() {
+  avatarHandle?.stopAudio();
+}
+
 function setSpeaking(speaking: boolean) {
   avatarHandle?.setSpeaking(speaking);
 }
@@ -216,6 +220,7 @@ onBeforeUnmount(() => {
 defineExpose({
   playMotion,
   speak,
+  stopAudio,
   setSpeaking,
 });
 </script>

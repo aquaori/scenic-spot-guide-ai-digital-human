@@ -472,6 +472,7 @@ export async function createAvatarRuntime(
   let sourceNode: MediaElementAudioSourceNode | null = null;
   let analyserNode: AnalyserNode | null = null;
   let analyserData: Uint8Array | null = null;
+  let activeAudioFinish: (() => void) | null = null;
   let lipSync = 0;
   let motionMixer: THREE.AnimationMixer | null = null;
   let motionAction: THREE.AnimationAction | null = null;
@@ -751,13 +752,14 @@ export async function createAvatarRuntime(
       return false;
     }
 
+    const motionNonce = ++currentMotionNonce;
     const asset = await loadMotionClip(motionUrl, "upperBody");
-    if (!asset || nonce !== talkingMotion.nonce) {
+    if (!asset || nonce !== talkingMotion.nonce || motionNonce !== currentMotionNonce) {
       return false;
     }
 
-    await ensureIdleBaseLayer(motionAction?.time ?? 0);
-    if (nonce !== talkingMotion.nonce) {
+    await ensureIdleBaseLayer(motionAction?.time ?? 0, motionNonce);
+    if (nonce !== talkingMotion.nonce || motionNonce !== currentMotionNonce) {
       return false;
     }
 
@@ -782,6 +784,10 @@ export async function createAvatarRuntime(
 
   function requestTalkingMotionStop() {
     talkingMotion.stopRequested = true;
+    if (!state.speaking && talkingMotion.phase && talkingMotion.phase !== "stop") {
+      const nonce = talkingMotion.nonce;
+      void playTalkingMotionPhase("stop", nonce);
+    }
   }
 
   function handleTalkingMotionFinished(action: THREE.AnimationAction) {
@@ -790,8 +796,9 @@ export async function createAvatarRuntime(
     }
 
     const completedPhase = talkingMotion.phase;
+    const completedNonce = talkingMotion.nonce;
     queueMicrotask(() => {
-      if (action !== motionAction && completedPhase !== "stop") {
+      if (completedNonce !== talkingMotion.nonce || action !== motionAction) {
         return;
       }
 
@@ -824,6 +831,7 @@ export async function createAvatarRuntime(
   }
 
   async function queueRestTransition(nextMotionName: string, duration: number) {
+    const transitionNonce = ++currentMotionNonce;
     if (!motionAction && !currentMotionAsset) {
       pendingMotionName = null;
       await playResolvedMotion(nextMotionName);
@@ -832,6 +840,10 @@ export async function createAvatarRuntime(
 
     const fromPose = captureCurrentPose();
     const toPose = await createIdleReferencePose();
+    if (transitionNonce !== currentMotionNonce) {
+      return;
+    }
+
     motionAction?.stop();
     motionMixer?.stopAllAction();
     motionAction = null;
@@ -928,9 +940,9 @@ export async function createAvatarRuntime(
     applyRotationOffset("rightThumbProximal", { x: 3, y: 3, z: -5 }, 0.08, "YXZ");
     applyRotationOffset("rightThumbDistal", { x: 4, y: 2, z: -4 }, 0.08, "YXZ");
 
-    applyRotationOffset("leftIndexProximal", { x: 14 }, fingerWeight);
-    applyRotationOffset("leftIndexIntermediate", { x: 16 }, fingerWeight);
-    applyRotationOffset("leftIndexDistal", { x: 10 }, fingerWeight);
+    applyRotationOffset("leftIndexProximal", { x: 18, z: -2 }, fingerWeight, "XZY");
+    applyRotationOffset("leftIndexIntermediate", { x: 20 }, fingerWeight);
+    applyRotationOffset("leftIndexDistal", { x: 12 }, fingerWeight);
     applyRotationOffset("leftMiddleProximal", { x: 18 }, fingerWeight);
     applyRotationOffset("leftMiddleIntermediate", { x: 20 }, fingerWeight);
     applyRotationOffset("leftMiddleDistal", { x: 12 }, fingerWeight);
@@ -941,9 +953,9 @@ export async function createAvatarRuntime(
     applyRotationOffset("leftLittleIntermediate", { x: 24 }, fingerWeight);
     applyRotationOffset("leftLittleDistal", { x: 15 }, fingerWeight);
 
-    applyRotationOffset("rightIndexProximal", { x: 14 }, fingerWeight);
-    applyRotationOffset("rightIndexIntermediate", { x: 16 }, fingerWeight);
-    applyRotationOffset("rightIndexDistal", { x: 10 }, fingerWeight);
+    applyRotationOffset("rightIndexProximal", { x: 18, z: 2 }, fingerWeight, "XZY");
+    applyRotationOffset("rightIndexIntermediate", { x: 20 }, fingerWeight);
+    applyRotationOffset("rightIndexDistal", { x: 12 }, fingerWeight);
     applyRotationOffset("rightMiddleProximal", { x: 18 }, fingerWeight);
     applyRotationOffset("rightMiddleIntermediate", { x: 20 }, fingerWeight);
     applyRotationOffset("rightMiddleDistal", { x: 12 }, fingerWeight);
@@ -1029,11 +1041,12 @@ export async function createAvatarRuntime(
     ];
 
     fingerSets.forEach(([boneName, offset]) => {
-      const curl = Math.sin(phase + offset) * fingerCurl;
+      const isIndexFinger = boneName.includes("Index");
+      const curl = Math.sin(phase + offset) * (isIndexFinger ? fingerCurl * 0.78 : fingerCurl);
       const spread =
         boneName.startsWith("left")
-          ? Math.cos(phase + offset) * fingerSpread
-          : -Math.cos(phase + offset) * fingerSpread;
+          ? Math.cos(phase + offset) * (isIndexFinger ? fingerSpread * 0.45 : fingerSpread)
+          : -Math.cos(phase + offset) * (isIndexFinger ? fingerSpread * 0.45 : fingerSpread);
       applyOscillation(boneName, { x: curl, z: spread }, 0.06, "XZY");
     });
 
@@ -1535,6 +1548,8 @@ export async function createAvatarRuntime(
     if (speaking) {
       talkingMotion.nonce += 1;
       talkingMotion.stopRequested = false;
+      motionTransition = null;
+      pendingMotionName = null;
       void playTalkingMotionPhase("start", talkingMotion.nonce);
     } else {
       syntheticLipSyncTime = 0;
@@ -1544,8 +1559,8 @@ export async function createAvatarRuntime(
     applyExpressionState();
   }
 
-  async function ensureIdleBaseLayer(referenceTime = 0) {
-    if (!vrm || !motionMixer || idleBaseAction) {
+  async function ensureIdleBaseLayer(referenceTime = 0, motionNonce = currentMotionNonce) {
+    if (!vrm || !motionMixer || idleBaseAction || motionNonce !== currentMotionNonce) {
       return;
     }
 
@@ -1556,7 +1571,7 @@ export async function createAvatarRuntime(
     }
 
     const idleAsset = await loadMotionClip(idleUrl, "lowerBody");
-    if (!idleAsset) {
+    if (!idleAsset || motionNonce !== currentMotionNonce) {
       return;
     }
 
@@ -1596,7 +1611,10 @@ export async function createAvatarRuntime(
 
     if (!motionAction || !currentMotionAsset) {
       if (motionAsset.bodyMask === "upperBody") {
-        await ensureIdleBaseLayer(previousActionTime);
+        await ensureIdleBaseLayer(previousActionTime, motionNonce);
+        if (motionNonce !== currentMotionNonce) {
+          return false;
+        }
       } else {
         idleBaseAction?.stop();
         idleBaseAction = null;
@@ -1622,7 +1640,10 @@ export async function createAvatarRuntime(
 
     motionAction.stop();
     if (motionAsset.bodyMask === "upperBody") {
-      await ensureIdleBaseLayer(previousActionTime);
+      await ensureIdleBaseLayer(previousActionTime, motionNonce);
+      if (motionNonce !== currentMotionNonce) {
+        return false;
+      }
     } else {
       idleBaseAction?.stop();
       idleBaseAction = null;
@@ -1708,6 +1729,24 @@ export async function createAvatarRuntime(
       analyserData = new Uint8Array(analyserNode.frequencyBinCount);
       sourceNode.connect(analyserNode);
       analyserNode.connect(audioContext.destination);
+    }
+  }
+
+  function stopActiveAudioPlayback() {
+    const finish = activeAudioFinish;
+    audioElement.pause();
+    try {
+      audioElement.currentTime = 0;
+    } catch {
+      // MediaSource-backed audio can reject seeking while it is opening.
+    }
+    audioElement.removeAttribute("src");
+    audioElement.load();
+
+    if (finish) {
+      finish();
+    } else {
+      setRuntimeSpeaking(false);
     }
   }
 
@@ -1886,6 +1925,7 @@ export async function createAvatarRuntime(
     },
     async speak(audioUrl) {
       await ensureAudioGraph();
+      activeAudioFinish?.();
       setRuntimeSpeaking(true);
       audioElement.pause();
       audioElement.currentTime = 0;
@@ -1893,36 +1933,50 @@ export async function createAvatarRuntime(
       audioElement.load();
 
       await new Promise<void>((resolve, reject) => {
+        let settled = false;
         const onEnd = () => {
-          cleanup();
-          setRuntimeSpeaking(false);
-          resolve();
+          finish();
         };
         const onError = () => {
-          cleanup();
-          setRuntimeSpeaking(false);
-          reject(new Error(`Failed to play audio: ${audioUrl}`));
+          finish(new Error(`Failed to play audio: ${audioUrl}`));
         };
         const cleanup = () => {
           audioElement.removeEventListener("ended", onEnd);
           audioElement.removeEventListener("error", onError);
         };
+        const finish = (error?: Error) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (activeAudioFinish === finish) {
+            activeAudioFinish = null;
+          }
+          cleanup();
+          setRuntimeSpeaking(false);
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        };
+        activeAudioFinish = finish;
         audioElement.addEventListener("ended", onEnd, { once: true });
         audioElement.addEventListener("error", onError, { once: true });
         audioElement.play().catch(() => {
-          cleanup();
-          setRuntimeSpeaking(false);
-          reject(new Error(`Failed to play audio: ${audioUrl}`));
+          finish(new Error(`Failed to play audio: ${audioUrl}`));
         });
       });
+    },
+    stopAudio() {
+      stopActiveAudioPlayback();
     },
     getState() {
       return { ...state };
     },
     dispose() {
       currentMotionNonce += 1;
-      audioElement.pause();
-      audioElement.src = "";
+      stopActiveAudioPlayback();
       sourceNode?.disconnect();
       analyserNode?.disconnect();
       void audioContext?.close();

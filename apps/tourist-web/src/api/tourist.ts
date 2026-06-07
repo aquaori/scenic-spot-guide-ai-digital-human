@@ -1,5 +1,12 @@
 import { touristEnv } from "../config/env";
-import { getVisitorId } from "../lib/visitor";
+import {
+  getCurrentTouristIdentity,
+  getTouristToken,
+  getTouristUserInfo,
+  getVisitorId,
+  persistTouristAuth,
+  type TouristUserInfo
+} from "../lib/visitor";
 import {
   subscribeTouristStream,
   type TouristStreamHandlers,
@@ -10,7 +17,9 @@ import {
   getMockConversationDetail,
   getMockConversationList,
   getMockTouristBootstrap,
-  stopMockTouristChat,
+  interruptMockTouristChat,
+  loginMockTourist,
+  registerMockTourist,
   submitMockTouristChat,
   subscribeMockTouristStream
 } from "../mocks/api";
@@ -34,6 +43,9 @@ export interface TouristBootstrapPayload {
 export interface TouristBootstrapData {
   scenicId: number;
   scenicName: string;
+  scenic: {
+    scenicName: string;
+  };
   digitalHuman: TouristDigitalHuman | null;
   onlineCount: number;
 }
@@ -42,6 +54,9 @@ interface TouristBootstrapResponseData {
   id?: number;
   scenicId?: number;
   scenicName?: string;
+  scenic?: {
+    scenicName?: string;
+  };
   digitalHuman?: TouristDigitalHuman | null;
   onlineCount?: number;
 }
@@ -64,8 +79,8 @@ export interface TouristChatEndPayload {
   scenicId?: string | number;
 }
 
-export interface TouristChatStopPayload {
-  conversationId: string;
+export interface TouristChatInterruptPayload {
+  sessionId: string;
 }
 
 export interface TouristConversationListPayload {
@@ -102,6 +117,23 @@ export interface TouristConversationDetail {
   turns: TouristConversationTurn[];
 }
 
+export interface TouristRegisterPayload {
+  visitorId: string;
+  userName: string;
+  password: string;
+  phonenumber?: string;
+}
+
+export interface TouristLoginPayload {
+  userName: string;
+  password: string;
+}
+
+export interface TouristAuthData {
+  token: string;
+  userInfo: TouristUserInfo;
+}
+
 const joinUrl = (baseUrl: string, path: string) => {
   const base = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
   const nextPath = path.startsWith("/") ? path : `/${path}`;
@@ -119,13 +151,33 @@ const buildUrl = (path: string, query?: Record<string, QueryValue>) => {
   return url.toString();
 };
 
+const buildRequestHeaders = (headers?: HeadersInit, hasBody = false) => {
+  const nextHeaders = new Headers(headers);
+
+  if (hasBody && !nextHeaders.has("Content-Type")) {
+    nextHeaders.set("Content-Type", "application/json");
+  }
+
+  const token = getTouristToken();
+  if (token) {
+    if (!nextHeaders.has("Authorization")) {
+      nextHeaders.set("Authorization", `Bearer ${token}`);
+    }
+    return nextHeaders;
+  }
+
+  const identity = getCurrentTouristIdentity();
+  if (identity.type === "visitor" && !nextHeaders.has("X-Visitor-Id")) {
+    nextHeaders.set("X-Visitor-Id", identity.visitorId);
+  }
+
+  return nextHeaders;
+};
+
 const requestJson = async <T>(path: string, options: RequestInit = {}, query?: Record<string, QueryValue>) => {
   const response = await fetch(buildUrl(path, query), {
     ...options,
-    headers: {
-      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...(options.headers ?? {})
-    }
+    headers: buildRequestHeaders(options.headers, options.body !== undefined)
   });
 
   if (!response.ok) {
@@ -145,7 +197,10 @@ const normalizeBootstrapData = (
 
   return {
     scenicId: data.scenicId ?? data.id ?? fallbackId ?? 0,
-    scenicName: data.scenicName ?? "",
+    scenicName: data.scenic?.scenicName ?? data.scenicName ?? "",
+    scenic: {
+      scenicName: data.scenic?.scenicName ?? data.scenicName ?? ""
+    },
     digitalHuman: data.digitalHuman ?? null,
     onlineCount: typeof data.onlineCount === "number" ? data.onlineCount : 0
   };
@@ -229,6 +284,58 @@ export const touristApi = {
       data: normalizeBootstrapData(response.data, payload.id)
     };
   },
+  async register(payload: TouristRegisterPayload): Promise<{ code: number; msg: string; data: TouristAuthData }> {
+    if (touristEnv.enableMock) {
+      const response = await registerMockTourist(payload);
+      persistTouristAuth(response.data.token, response.data.userInfo);
+      return response;
+    }
+
+    const response = await requestJson<{ code: number; msg: string; data?: TouristAuthData }>(
+      "/tourist/register",
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    );
+
+    if (response.code !== 200 || !response.data?.token || !response.data.userInfo?.userName) {
+      throw new Error(response.msg || "游客注册失败");
+    }
+
+    persistTouristAuth(response.data.token, response.data.userInfo);
+
+    return {
+      ...response,
+      data: response.data
+    };
+  },
+  async login(payload: TouristLoginPayload): Promise<{ code: number; msg: string; data: TouristAuthData }> {
+    if (touristEnv.enableMock) {
+      const response = await loginMockTourist(payload);
+      persistTouristAuth(response.data.token, response.data.userInfo);
+      return response;
+    }
+
+    const response = await requestJson<{ code: number; msg: string; data?: TouristAuthData }>(
+      "/tourist/login",
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    );
+
+    if (response.code !== 200 || !response.data?.token || !response.data.userInfo?.userName) {
+      throw new Error(response.msg || "游客登录失败");
+    }
+
+    persistTouristAuth(response.data.token, response.data.userInfo);
+
+    return {
+      ...response,
+      data: response.data
+    };
+  },
   async submitChat(payload: TouristChatPayload): Promise<{ code: number; msg: string; data: TouristChatSubmitData }> {
     if (touristEnv.enableMock) {
       return submitMockTouristChat(payload);
@@ -238,7 +345,12 @@ export const touristApi = {
       "/tourist/chat",
       {
         method: "POST",
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          message: payload.message,
+          visitorId: payload.visitorId,
+          scenicId: payload.scenicId,
+          sessionId: payload.sessionId
+        })
       }
     );
 
@@ -255,20 +367,35 @@ export const touristApi = {
       data: response.data
     };
   },
-  subscribeStream(conversationId: string, handlers: TouristStreamHandlers): TouristStreamSubscription {
+  subscribeStream(
+    conversationId: string,
+    handlers: TouristStreamHandlers,
+    sessionId?: string
+  ): TouristStreamSubscription {
     if (touristEnv.enableMock) {
       return subscribeMockTouristStream(conversationId, handlers);
     }
 
     return subscribeTouristStream(
-      buildUrl(`/tourist/stream/${encodeURIComponent(conversationId)}`),
+      buildUrl(`/tourist/stream/${encodeURIComponent(conversationId)}`, { sessionId }),
       handlers
     );
   },
-  async stopChat(payload: TouristChatStopPayload) {
+  async interruptChat(payload: TouristChatInterruptPayload) {
     if (touristEnv.enableMock) {
-      await stopMockTouristChat(payload.conversationId);
+      await interruptMockTouristChat(payload.sessionId);
+      return;
     }
+
+    await requestJson<{ code: number; msg: string; data: null }>(
+      "/tourist/chat/interrupt",
+      {
+        method: "POST"
+      },
+      {
+        sessionId: payload.sessionId
+      }
+    );
   },
   async endChat(payload: TouristChatEndPayload) {
     if (touristEnv.enableMock) {
@@ -276,35 +403,28 @@ export const touristApi = {
       return;
     }
 
-    const nextPayload = {
-      ...payload,
-      visitorId: payload.visitorId || getVisitorId()
-    };
-
-    try {
-      await requestJson<{ code: number; msg: string; data: null }>(
-        "/tourist/chat/end",
-        {
-          method: "POST",
-          body: JSON.stringify(nextPayload)
-        }
-      );
-    } catch (error) {
-      throw error;
-    }
+    await requestJson<{ code: number; msg: string; data: null }>(
+      "/tourist/chat/end",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: payload.sessionId,
+          scenicId: payload.scenicId,
+          visitorId: payload.visitorId
+        })
+      }
+    );
   },
   async getConversationList(payload: TouristConversationListPayload) {
     if (touristEnv.enableMock) {
       return getMockConversationList(payload);
     }
 
-    const nextVisitorId = payload.visitorId || getVisitorId();
-
     const response = await requestJson<{ code: number; msg: string; data?: unknown }>(
       "/tourist/conversation/list",
       { method: "GET" },
       {
-        visitorId: nextVisitorId,
+        visitorId: payload.visitorId,
         scenicId: payload.scenicId,
         page: payload.page,
         size: payload.size
@@ -316,15 +436,14 @@ export const touristApi = {
       data: normalizeConversationListData(response.data)
     };
   },
-  async getConversationDetail(sessionId: string, visitorId?: string | number) {
+  async getConversationDetail(sessionId: string) {
     if (touristEnv.enableMock) {
-      return getMockConversationDetail(sessionId, visitorId);
+      return getMockConversationDetail(sessionId);
     }
 
     const response = await requestJson<{ code: number; msg: string; data?: unknown }>(
       `/tourist/conversation/${encodeURIComponent(sessionId)}`,
-      { method: "GET" },
-      { visitorId: visitorId ?? getVisitorId() }
+      { method: "GET" }
     );
 
     return {
@@ -337,5 +456,10 @@ export const touristApi = {
   }
 };
 
-export { getVisitorId } from "../lib/visitor";
+export {
+  getCurrentTouristIdentity,
+  getTouristToken,
+  getTouristUserInfo,
+  getVisitorId
+} from "../lib/visitor";
 export type { TouristStreamEvent, TouristStreamHandlers, TouristStreamSubscription } from "./tourist-stream";
